@@ -1,0 +1,1737 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>暴走老铁 Rampage Bro - iOS Enhanced</title>
+<!--
+  暴走老铁（Rampage Bro）— 单文件像素横版射击（致敬合金弹头）
+  操作（键鼠）：A/D 移动，W/空格 跳，S 蹲，鼠标瞄准，左键射击，右键手雷，Q 大招，E 上下载具
+  操作（键盘）：←→ 移动，↑ 抬枪 ↓ 蹲，J/Z 射击，K/X 跳，L/C 手雷，I/V 大招，E 载具
+  手机：左侧虚拟摇杆移动/抬枪/蹲，右侧按钮射击/跳跃/手雷/大招/载具/暂停
+  通用：P/Esc 暂停，M 静音
+  调试：URL 加 ?debug=1（G 无敌，1-5 跳关，7 换武器，T 自杀，F 充满大招）
+-->
+<style>
+html,body{margin:0;width:100%;height:100%;background:#0a0d12;overflow:hidden;position:fixed;inset:0;touch-action:none;overscroll-behavior:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+body{font-family:"Microsoft YaHei",system-ui,sans-serif}
+canvas{position:absolute;inset:0;margin:auto;image-rendering:pixelated;image-rendering:crisp-edges;cursor:none;touch-action:none}
+#touch-ui{display:none;position:fixed;inset:0;z-index:5;pointer-events:none}
+.touchable #touch-ui{display:block}
+#stick{position:absolute;left:calc(18px + env(safe-area-inset-left));bottom:calc(18px + env(safe-area-inset-bottom));width:116px;height:116px;border:2px solid rgba(200,212,224,.55);border-radius:50%;background:rgba(16,19,26,.28);box-shadow:0 0 0 2px rgba(0,0,0,.18) inset;pointer-events:auto;touch-action:none}
+#stick-knob{position:absolute;left:38px;top:38px;width:40px;height:40px;border-radius:50%;background:rgba(242,201,76,.82);box-shadow:0 0 0 3px rgba(16,19,26,.45)}
+.touch-buttons{position:absolute;right:calc(14px + env(safe-area-inset-right));bottom:calc(16px + env(safe-area-inset-bottom));width:184px;height:148px;pointer-events:none}
+.tbtn{position:absolute;width:48px;height:48px;border:2px solid rgba(242,246,250,.54);border-radius:50%;background:rgba(16,19,26,.42);color:#f2f6fa;font:bold 17px system-ui,sans-serif;text-align:center;line-height:44px;padding:0;pointer-events:auto;touch-action:none}
+.tbtn:active,.tbtn.down{background:rgba(242,201,76,.82);color:#10131a}
+.t-fire{right:0;bottom:44px;width:64px;height:64px;line-height:60px;font-size:24px}
+.t-jump{right:70px;bottom:70px}.t-nade{right:70px;bottom:14px}.t-super{right:126px;bottom:42px}.t-veh{right:16px;bottom:116px}.t-pause{right:138px;bottom:104px;width:38px;height:38px;line-height:34px;font-size:15px}
+@media (orientation:portrait){#stick{width:104px;height:104px}#stick-knob{left:34px;top:34px;width:36px;height:36px}.touch-buttons{transform:scale(.9);transform-origin:right bottom}}
+</style>
+</head>
+<body>
+<canvas id="game" width="480" height="270"></canvas>
+<div id="touch-ui" aria-hidden="true">
+ <div id="stick"><div id="stick-knob"></div></div>
+ <div class="touch-buttons">
+  <button class="tbtn t-fire" data-touch="fire">●</button>
+  <button class="tbtn t-jump" data-touch="jump">跳</button>
+  <button class="tbtn t-nade" data-touch="nade">雷</button>
+  <button class="tbtn t-super" data-touch="super">招</button>
+  <button class="tbtn t-veh" data-touch="veh">E</button>
+  <button class="tbtn t-pause" data-touch="pause">Ⅱ</button>
+ </div>
+</div>
+<script>
+'use strict';
+/* ==================== §1 CONST ==================== */
+const VW=480,VH=270,GRAV=900;
+const cv=document.getElementById('game'),ctx=cv.getContext('2d');
+const IS_TOUCH=('ontouchstart' in window)||(navigator.maxTouchPoints||0)>0||/[?&]touch=1/.test(location.search);
+if(IS_TOUCH)document.documentElement.classList.add('touchable');
+ctx.imageSmoothingEnabled=false;
+function fit(){const raw=Math.min(innerWidth/VW,innerHeight/VH),s=IS_TOUCH?Math.max(0.45,raw):Math.max(1,Math.floor(raw));
+const w=Math.max(1,Math.floor(VW*s)),h=Math.max(1,Math.floor(VH*s));
+cv.style.width=w+'px';cv.style.height=h+'px';cv._scale=w/VW;}
+addEventListener('resize',fit);fit();
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const rnd=(a,b)=>a+Math.random()*(b-a);
+const irnd=(a,b)=>Math.floor(rnd(a,b+1));
+const lerp=(a,b,t)=>a+(b-a)*t;
+const chance=p=>Math.random()<p;
+const dist2=(ax,ay,bx,by)=>(ax-bx)*(ax-bx)+(ay-by)*(ay-by);
+// 调色板：字符 -> 颜色（'.'=透明）
+const PAL={'.':null,'0':'#10131a','1':'#1a2233','2':'#2a3650','G':'#8a96a8','g':'#5a6678',
+'W':'#f2f6fa','w':'#c8d4e0','B':'#3d6fd6','b':'#7aa2ff','d':'#274a9e',
+'R':'#d63d3d','r':'#ff8a7a','S':'#e8dcc8','s':'#bfae8e','k':'#8c7a5c',
+'Y':'#f2c94c','F':'#ffe9b0','K':'#5a4632','P':'#d678c8','C':'#62d6c8','c':'#3a9e92',
+'O':'#e8853d','o':'#ffb47a','E':'#f2b09a','e':'#d68f78','N':'#3a4252','L':'#9ef27a'};
+const DEBUG=/[?&]debug=1/.test(location.search);
+const HARD={initialLives:4,initialNades:4,enemyHp:1.14,enemySpeed:1.08,perLevelHp:0.18,perLevelSpeed:0.10,bossHp:1.12,bossPerLevel:0.08,hostileSpeedPerLevel:0.06};
+let god=false;
+
+/* ==================== §2 AUDIO ==================== */
+const Audio2={ac:null,muted:false,bgm:null,bgmStep:0,bgmNext:0,
+unlock(){if(!this.ac){try{this.ac=new (window.AudioContext||window.webkitAudioContext)();}catch(e){}}
+ if(this.ac&&this.ac.state==='suspended')this.ac.resume();},
+osc(type,f0,f1,dur,vol,when){const ac=this.ac;if(!ac||this.muted)return;
+ const t=when||ac.currentTime,o=ac.createOscillator(),g=ac.createGain();
+ o.type=type;o.frequency.setValueAtTime(f0,t);
+ if(f1!==f0)o.frequency.exponentialRampToValueAtTime(Math.max(1,f1),t+dur);
+ g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(0.001,t+dur);
+ o.connect(g).connect(ac.destination);o.start(t);o.stop(t+dur+0.02);},
+noise(dur,vol,fc,when){const ac=this.ac;if(!ac||this.muted)return;
+ const t=when||ac.currentTime,n=ac.sampleRate*dur|0,buf=ac.createBuffer(1,n,ac.sampleRate),d=buf.getChannelData(0);
+ for(let i=0;i<n;i++)d[i]=(Math.random()*2-1)*(1-i/n);
+ const src=ac.createBufferSource();src.buffer=buf;
+ const f=ac.createBiquadFilter();f.type='lowpass';f.frequency.value=fc||1200;
+ const g=ac.createGain();g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(0.001,t+dur);
+ src.connect(f).connect(g).connect(ac.destination);src.start(t);},
+sfx(n){const A=this;switch(n){
+ case 'shoot':A.osc('square',880,440,0.06,0.12);break;
+ case 'mg':A.osc('square',990,520,0.03,0.09);break;
+ case 'plate':A.osc('sawtooth',300,140,0.18,0.14);break;
+ case 'cement':A.noise(0.06,0.05,700);break;
+ case 'fix':A.osc('square',1200,600,0.1,0.1);A.noise(0.05,0.04,2000);break;
+ case 'boom':A.noise(0.4,0.3,500);A.osc('sine',120,40,0.4,0.25);break;
+ case 'melee':A.osc('sawtooth',220,90,0.1,0.16);break;
+ case 'hit':A.noise(0.05,0.12,1800);break;
+ case 'crack':A.noise(0.15,0.18,900);A.osc('triangle',200,80,0.12,0.1);break;
+ case 'pickup':A.osc('square',660,660,0.07,0.12);A.osc('square',990,990,0.08,0.12,A.ac&&A.ac.currentTime+0.08);break;
+ case 'rescue':[523,659,784].forEach((f,i)=>A.osc('square',f,f,0.1,0.12,A.ac&&A.ac.currentTime+i*0.09));break;
+ case 'die':A.osc('sawtooth',440,110,0.5,0.2);break;
+ case 'promote':[392,523,659,784].forEach((f,i)=>A.osc('square',f,f,0.16,0.14,A.ac&&A.ac.currentTime+i*0.13));break;
+ case 'bossroar':A.osc('sawtooth',90,55,0.7,0.3);A.osc('sawtooth',140,70,0.7,0.2);A.noise(0.5,0.15,300);break;
+ case 'stun':A.noise(0.25,0.1,3500);break;
+ case 'jump':A.osc('square',330,520,0.08,0.07);break;
+ case 'nade':A.osc('triangle',500,300,0.1,0.1);break;
+ case 'super':[262,330,392,523,659].forEach((f,i)=>A.osc('sawtooth',f,f,0.2,0.14,A.ac&&A.ac.currentTime+i*0.08));break;
+ case 'veh':A.osc('sawtooth',150,260,0.25,0.14);break;
+}},
+// 16 步音序器：track={bpm,bass:[16],lead:[16],noise:[16]}，音符=半音号(0=休止,69=A4)
+midi(m){return 440*Math.pow(2,(m-69)/12);},
+play(track){this.bgm=track;this.bgmStep=0;this.bgmNext=0;},
+stop(){this.bgm=null;},
+update(){const ac=this.ac;if(!ac||!this.bgm||this.muted)return;
+ const spb=60/this.bgm.bpm/4;
+ if(this.bgmNext<ac.currentTime)this.bgmNext=ac.currentTime+0.05;
+ while(this.bgmNext<ac.currentTime+0.12){const s=this.bgmStep&15,t=this.bgmNext,tr=this.bgm;
+  if(tr.bass[s])this.osc('triangle',this.midi(tr.bass[s]),this.midi(tr.bass[s]),spb*0.9,0.08,t);
+  if(tr.lead[s])this.osc('square',this.midi(tr.lead[s]),this.midi(tr.lead[s]),spb*0.8,0.05,t);
+  if(tr.noise[s])this.noise(0.03,0.05,tr.noise[s]>1?6000:2500,t);
+  this.bgmStep++;this.bgmNext+=spb;}}
+};
+// 曲库（后续任务补全每关曲目）
+const T_main={bpm:112,
+ bass:[45,0,45,0,52,0,45,0,43,0,43,0,50,0,43,0],
+ lead:[69,0,72,74,0,72,69,0,67,69,0,64,0,67,69,0],
+ noise:[2,0,1,0,2,0,1,1,2,0,1,0,2,0,1,1]};
+addEventListener('pointerdown',()=>Audio2.unlock());
+addEventListener('keydown',()=>Audio2.unlock());
+addEventListener('touchstart',()=>Audio2.unlock(),{passive:true});
+addEventListener('touchmove',e=>{if(IS_TOUCH)e.preventDefault();},{passive:false});
+addEventListener('gesturestart',e=>e.preventDefault());
+
+/* ==================== §4 INPUT ==================== */
+const Input={keys:{},pressed:{},mx:VW/2,my:VH/2,m0:false,m2:false,m0P:false,m2P:false,
+usingMouse:true,_seq:'',
+get l(){return this.keys.ArrowLeft||this.keys.KeyA||this.keys.TouchLeft;},
+get r(){return this.keys.ArrowRight||this.keys.KeyD||this.keys.TouchRight;},
+get up(){return this.keys.ArrowUp||this.keys.TouchUp;},
+get down(){return this.keys.ArrowDown||this.keys.KeyS||this.keys.TouchDown;},
+get fire(){return this.keys.KeyJ||this.keys.KeyZ||this.m0;},
+get fireP(){return this.pressed.KeyJ||this.pressed.KeyZ||this.m0P||this.pressed.TouchFire;},
+get jumpP(){return this.pressed.KeyK||this.pressed.KeyX||this.pressed.Space||this.pressed.KeyW||this.pressed.TouchJump;},
+get jump(){return this.keys.KeyK||this.keys.KeyX||this.keys.Space||this.keys.KeyW||this.keys.TouchJump;},
+get nadeP(){return this.pressed.KeyL||this.pressed.KeyC||this.m2P||this.pressed.TouchNade;},
+get superP(){return this.pressed.KeyQ||this.pressed.KeyI||this.pressed.KeyV||this.pressed.TouchSuper;},
+get vehP(){return this.pressed.KeyE||this.pressed.TouchVeh;},
+get pauseP(){return this.pressed.KeyP||this.pressed.Escape||this.pressed.TouchPause;},
+get anyP(){return this.m0P||Object.keys(this.pressed).some(k=>k!=='KeyM'&&k!=='KeyP'&&k!=='Escape');},
+endFrame(){this.pressed={};this.m0P=this.m2P=false;},
+// 世界坐标瞄准向量（px,py=枪口世界坐标）
+aim(px,py){if(this.usingMouse){const wx=this.mx+cam.x,wy=this.my;
+  let dx=wx-px,dy=wy-py;const l=Math.hypot(dx,dy)||1;return{dx:dx/l,dy:dy/l};}
+ return null;}};
+addEventListener('keydown',e=>{
+ if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
+ if(!Input.keys[e.code])Input.pressed[e.code]=true;
+ Input.keys[e.code]=true;
+ if(['KeyJ','KeyZ','KeyL','KeyC','ArrowUp','ArrowDown'].includes(e.code))Input.usingMouse=false;
+ if(e.code==='KeyM')Audio2.muted=!Audio2.muted;
+ // 调试序列 1145
+ Input._seq=(Input._seq+(e.key||'')).slice(-4);if(Input._seq==='1145')location.search='?debug=1';
+});
+addEventListener('keyup',e=>{Input.keys[e.code]=false;});
+cv.addEventListener('mousemove',e=>{const r=cv.getBoundingClientRect(),s=cv._scale||1;
+ Input.mx=clamp((e.clientX-r.left)/s,0,VW);Input.my=clamp((e.clientY-r.top)/s,0,VH);Input.usingMouse=true;});
+cv.addEventListener('mousedown',e=>{Input.usingMouse=true;
+ if(e.button===0){Input.m0=true;Input.m0P=true;}if(e.button===2){Input.m2=true;Input.m2P=true;}});
+addEventListener('mouseup',e=>{if(e.button===0)Input.m0=false;if(e.button===2)Input.m2=false;});
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+function touchKey(code,on){if(on&&!Input.keys[code])Input.pressed[code]=true;Input.keys[code]=on;}
+function setupTouchControls(){
+ if(!IS_TOUCH)return;
+ const stick=document.getElementById('stick'),knob=document.getElementById('stick-knob');
+ const base={pid:null,cx:0,cy:0};
+ const clearStick=()=>{base.pid=null;['TouchLeft','TouchRight','TouchUp','TouchDown'].forEach(k=>touchKey(k,false));knob.style.transform='translate(0,0)';};
+ const updateStick=e=>{
+  const r=stick.getBoundingClientRect(),rad=r.width/2;Input.usingMouse=false;
+  base.cx=r.left+rad;base.cy=r.top+rad;
+  let dx=e.clientX-base.cx,dy=e.clientY-base.cy,len=Math.hypot(dx,dy);
+  if(len>rad-12){dx*=((rad-12)/len);dy*=((rad-12)/len);len=rad-12;}
+  const nx=dx/(rad-12),ny=dy/(rad-12);
+  touchKey('TouchLeft',nx<-0.24);touchKey('TouchRight',nx>0.24);
+  touchKey('TouchUp',ny<-0.42);touchKey('TouchDown',ny>0.46);
+  knob.style.transform='translate('+Math.round(dx)+'px,'+Math.round(dy)+'px)';
+ };
+ stick.addEventListener('pointerdown',e=>{e.preventDefault();Audio2.unlock();base.pid=e.pointerId;stick.setPointerCapture&&stick.setPointerCapture(e.pointerId);updateStick(e);});
+ stick.addEventListener('pointermove',e=>{if(e.pointerId===base.pid){e.preventDefault();updateStick(e);}});
+ stick.addEventListener('pointerup',e=>{if(e.pointerId===base.pid){e.preventDefault();clearStick();}});
+ stick.addEventListener('pointercancel',clearStick);
+ const map={jump:'TouchJump',nade:'TouchNade',super:'TouchSuper',veh:'TouchVeh',pause:'TouchPause'};
+ document.querySelectorAll('[data-touch]').forEach(btn=>{
+  const act=btn.dataset.touch;
+  const down=e=>{e.preventDefault();Audio2.unlock();Input.usingMouse=false;btn.setPointerCapture&&btn.setPointerCapture(e.pointerId);btn.classList.add('down');
+   if(act==='fire'){Input.m0=true;Input.m0P=true;Input.pressed.TouchFire=true;}
+   else touchKey(map[act],true);};
+  const up=e=>{e&&e.preventDefault();btn.classList.remove('down');
+   if(act==='fire')Input.m0=false;else touchKey(map[act],false);};
+  btn.addEventListener('pointerdown',down);
+  btn.addEventListener('pointerup',up);
+  btn.addEventListener('pointercancel',up);
+  btn.addEventListener('lostpointercapture',up);
+ });
+ addEventListener('blur',()=>{clearStick();Input.m0=false;Object.keys(map).forEach(k=>touchKey(map[k],false));});
+}
+setupTouchControls();
+
+/* ==================== §5 ENGINE ==================== */
+function bake(rows){const h=rows.length,w=rows[0].length,c=document.createElement('canvas');
+ c.width=w;c.height=h;const x=c.getContext('2d');
+ for(let j=0;j<h;j++)for(let i=0;i<w;i++){const col=PAL[rows[j][i]];
+  if(col){x.fillStyle=col;x.fillRect(i,j,1,1);}}return c;}
+const bakeAnim=frames=>frames.map(bake);
+// 绘制精灵（世界坐标，自动减摄像机；anchor=中下）
+function drawSpr(img,x,y,flip){const px=Math.round(x-cam.x-img.width/2),py=Math.round(y-img.height);
+ if(flip){ctx.save();ctx.translate(px+img.width,py);ctx.scale(-1,1);ctx.drawImage(img,0,0);ctx.restore();}
+ else ctx.drawImage(img,px,py);}
+function rect(x,y,w,h,col){ctx.fillStyle=col;ctx.fillRect(Math.round(x-cam.x),Math.round(y),w,h);}
+function rectS(x,y,w,h,col){ctx.fillStyle=col;ctx.fillRect(Math.round(x),Math.round(y),w,h);} // 屏幕坐标
+function txt(s,x,y,col,size,align){ctx.fillStyle=col||'#fff';ctx.font=(size||8)+'px "Microsoft YaHei",sans-serif';
+ ctx.textAlign=align||'left';ctx.textBaseline='top';ctx.fillText(s,Math.round(x),Math.round(y));ctx.textAlign='left';}
+const cam={x:0,lockX:null,shake:0};
+// 镜头：跟随玩家只进不退；lockX 为推进上限（波次/BOSS战），到达后停住，不会跳跃甩开玩家
+function camFollow(tx){
+ const max=cam.lockX!==null?cam.lockX:1e9;
+ const target=clamp(tx-VW*0.4,cam.x,max);
+ cam.x=lerp(cam.x,target,0.15);}
+function camShake(n){cam.shake=Math.max(cam.shake,n);}
+// 粒子
+const Particles={list:[],
+ spawn(x,y,o){for(let i=0;i<(o.n||8);i++){const a=rnd(0,Math.PI*2),sp=rnd(0.3,1)*(o.spd||80);
+  const max=IS_TOUCH?170:260;if(this.list.length>max)this.list.splice(0,this.list.length-max);
+  this.list.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-(o.up||40),t:0,
+   life:rnd(0.5,1)*(o.life||0.6),col:Array.isArray(o.col)?o.col[irnd(0,o.col.length-1)]:(o.col||'#fff'),
+   sz:o.sz||2,grav:o.grav===undefined?500:o.grav});}},
+ bone(x,y){this.spawn(x,y,{n:10,col:['#f2f6fa','#c8d4e0','#e8dcc8'],spd:120,up:80,life:0.8});
+  this.spawn(x,y,{n:6,col:'#8a96a8',spd:60,life:0.5,sz:1,grav:100});},
+ blood(x,y){this.spawn(x,y,{n:8,col:['#d63d3d','#ff8a7a'],spd:90,up:60,life:0.6});},
+ update(dt){for(let i=this.list.length-1;i>=0;i--){const p=this.list[i];p.t+=dt;
+  if(p.t>p.life){this.list.splice(i,1);continue;}
+  p.vy+=p.grav*dt;p.x+=p.vx*dt;p.y+=p.vy*dt;}},
+ draw(){for(const p of this.list){ctx.globalAlpha=1-p.t/p.life;
+  rect(p.x,p.y,p.sz,p.sz,p.col);}ctx.globalAlpha=1;},
+ clear(){this.list=[];}};
+// 飘字
+const Floaters={list:[],
+ add(x,y,s,col){this.list.push({x,y,s,col:col||'#f2c94c',t:0});},
+ update(dt){for(let i=this.list.length-1;i>=0;i--){const f=this.list[i];f.t+=dt;f.y-=30*dt;
+  if(f.t>0.9)this.list.splice(i,1);}},
+ draw(){for(const f of this.list){ctx.globalAlpha=1-f.t/0.9;txt(f.s,f.x-cam.x,f.y,f.col,8);}ctx.globalAlpha=1;},
+ clear(){this.list=[];}};
+// 场景栈
+const Scenes={stack:[],
+ push(s){this.stack.push(s);s.enter&&s.enter();},
+ pop(){this.stack.pop();},
+ top(){return this.stack[this.stack.length-1];},
+ replace(s){this.stack=[s];s.enter&&s.enter();}};
+// 主循环
+let _last=0,_acc=0;const DT=1/60;let fps=60,_fc=0,_ft=0;
+function frame(t){requestAnimationFrame(frame);
+ _acc+=Math.min(0.1,(t-_last)/1000);_ft+=(t-_last)/1000;_fc++;_last=t;
+ if(_ft>0.5){fps=Math.round(_fc/_ft);_fc=0;_ft=0;}
+ while(_acc>=DT){_acc-=DT;Audio2.update();const s=Scenes.top();s&&s.update(DT);Input.endFrame();}
+ ctx.save();
+ if(cam.shake>0){ctx.translate(irnd(-2,2)*Math.min(1,cam.shake),irnd(-2,2)*Math.min(1,cam.shake));cam.shake=Math.max(0,cam.shake-DT*60*0.08);}
+ ctx.clearRect(-4,-4,VW+8,VH+8);
+ const s=Scenes.top();s&&s.draw();
+ ctx.restore();
+ drawCursor();
+ if(DEBUG)drawDebug();}
+function drawCursor(){if(!Input.usingMouse)return;const x=Math.round(Input.mx),y=Math.round(Input.my);
+ ctx.fillStyle='#f2c94c';ctx.fillRect(x-4,y,3,1);ctx.fillRect(x+2,y,3,1);
+ ctx.fillRect(x,y-4,1,3);ctx.fillRect(x,y+2,1,3);ctx.fillRect(x,y,1,1);}
+function drawDebug(){ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,150,30);
+ txt('FPS '+fps+' ents '+(typeof Ents!=='undefined'?Ents.all().length:0)+(god?' [无敌]':''),4,2,'#9ef27a',8);
+ if(typeof player!=='undefined'&&player)txt('x '+Math.round(player.x)+' y '+Math.round(player.y),4,14,'#9ef27a',8);}
+
+/* ==================== §3 SPRITES：老铁程序化烘焙 ==================== */
+// 形象硬性要求：发际线高(大额头)、黑框眼镜、大高个偏胖(凸肚)、微笑、白大褂、无听诊器
+const _pCache={};
+function bakePlayer(o){ // {legs:'idle|run|jump|crouch',legF,aim:0下/1平/2斜上/3正上,melee:0-2,cape,wipe,spin,dead:0-2,gun:{len,col}}
+ const key=JSON.stringify(o);if(_pCache[key])return _pCache[key];
+ const c=document.createElement('canvas');c.width=40;c.height=38;const x=c.getContext('2d');
+ const P=(col,X,Y,W,H)=>{x.fillStyle=col;x.fillRect(X,Y,W,H);};
+ const W='#f2f6fa',w='#c8d4e0',E='#f2b09a',e='#d68f78',N='#3a4252',K='#5a4632',G='#8a96a8',
+       B='#0e1118',R='#d63d3d',Y='#f2c94c';
+ const CX=16; // 身体中线
+ if(o.dead!==undefined){ // 死亡：仰倒（眼镜由粒子飞出）
+  const f=o.dead;
+  if(f===0){ // 后仰
+   P(W,CX-6,14,13,12);P(w,CX-6,24,13,2);P(E,CX+3,6,9,8);P(B,CX+5,9,2,2);
+   P(N,CX-8,26,5,10);P(N,CX+3,26,5,10);P('#10131a',CX-9,35,6,3);P('#10131a',CX+3,35,6,3);
+  }else{ // 躺平
+   P(N,2,32,10,4);P(W,12,30,16,6);P(w,12,34,16,2);P(E,28,29,9,7);P(B,30,31,2,1);
+   P(R,31,34,3,1); // 依然微笑
+  }
+  _pCache[key]=c;return c;}
+ // ---- 腿(白大褂下摆+深色裤) hips at y=24, feet y=36 ----
+ const cr=o.legs==='crouch';
+ const hipY=cr?28:24;
+ if(o.legs==='run'){const ph=[[-4,3],[-1,0],[3,-2],[0,1]][o.legF&3];
+  P(N,CX-6+ph[0],hipY+2,5,9-ph[1]);P('#10131a',CX-7+ph[0],hipY+10-ph[1],6,3);
+  P(N,CX+1-ph[0]/2,hipY+2,5,9+ph[1]>11?11:9+ph[1]);P('#10131a',CX-ph[0]/2,hipY+9+(ph[1]>0?2:0),6,3);
+ }else if(o.legs==='jump'){P(N,CX-7,hipY+2,5,7);P('#10131a',CX-8,hipY+8,6,3);
+  P(N,CX+2,hipY+2,5,9);P('#10131a',CX+1,hipY+10,6,3);
+ }else if(cr){P(N,CX-7,hipY+2,6,4);P(N,CX+2,hipY+2,6,4);P('#10131a',CX-8,hipY+5,7,3);P('#10131a',CX+2,hipY+5,7,3);
+ }else{P(N,CX-5,hipY+2,5,9);P(N,CX+1,hipY+2,5,9);P('#10131a',CX-6,hipY+10,6,3);P('#10131a',CX,hipY+10,6,3);}
+ // ---- 披风(主任终极皮肤，身后飘动) ----
+ if(o.cape){const wv=(o.legF&1)?2:0;P(w,CX-13,hipY-14,5,16+wv);P(W,CX-12,hipY-14,4,14+wv);}
+ // ---- 躯干：白大褂+凸肚 ----
+ const tY=hipY-12;
+ P(W,CX-6,tY,12,12);P(W,CX-7,tY+5,14,7); // 下半加宽=肚子
+ P(w,CX-7,tY+10,14,2);P(w,CX+4,tY,2,12); // 阴影
+ P(G,CX-1,tY+1,2,4);P('#10131a',CX,tY+2,1,1);P('#10131a',CX,tY+4,1,1); // 衣襟扣子
+ // ---- 头：大额头+高发际线+眼镜+微笑 ----
+ const hY=tY-12;
+ P(E,CX-4,hY,11,11); // 脸/大额头
+ P(e,CX-4,hY+9,11,2);
+ P('#2a2018',CX-5,hY,3,2);P('#2a2018',CX-5,hY+1,2,6); // 仅后脑勺一撮头发=高发际线
+ // 眼镜（黑框双镜片）
+ P(B,CX-2,hY+5,4,3);P(B,CX+3,hY+5,4,3);P(B,CX+2,hY+6,1,1);
+ P('#bfe9ff',CX-1,hY+6,2,1);P('#bfe9ff',CX+4,hY+6,2,1);
+ // 微笑
+ P(R,CX+2,hY+9,4,1);P(R,CX+1,hY+8,1,1);P(R,CX+6,hY+8,1,1);
+ // ---- 手臂+武器 ----
+ const sY=tY+3; // 肩
+ if(o.melee){ // 挥骨锤
+  if(o.melee===1){P(E,CX+4,sY-6,3,3);P(K,CX+6,sY-12,2,8);P(G,CX+4,sY-15,7,5);P(W,CX+2,sY-2,5,3);}
+  else{P(E,CX+8,sY+2,3,3);P(K,CX+9,sY+1,8,2);P(G,CX+16,sY-1,6,6);P(W,CX+3,sY,6,3);}
+ }else if(o.wipe){ // 擦眼镜
+  P(W,CX+2,sY,4,3);P(E,CX+5,sY-4,3,5);P(E,CX+3,hY+6,3,2);
+ }else if(o.spin!==undefined){ // 转骨锤
+  P(W,CX+2,sY,5,3);P(E,CX+7,sY,3,3);
+  if(o.spin===0){P(K,CX+9,sY-6,2,8);P(G,CX+7,sY-10,6,5);}
+  else{P(K,CX+9,sY+1,8,2);P(G,CX+15,sY-2,5,5);}
+ }else{ // 持枪：按瞄准姿态
+  const g=o.gun||{len:9,col:'#8a96a8'};
+  const dirs=[[0.8,0.6],[1,0],[0.75,-0.66],[0,-1]]; // 0下斜 1平 2斜上 3正上
+  const d=dirs[o.aim===undefined?1:o.aim];
+  let ax=CX+5,ay=sY+1;
+  P(W,CX+1,sY,5,3); // 大臂
+  for(let i=0;i<g.len;i++){P(g.col,Math.round(ax+d[0]*i),Math.round(ay+d[1]*i),2,2);}
+  P(E,ax-1,ay,3,3); // 手
+  if(g.col2)P(g.col2,Math.round(ax+d[0]*(g.len-2)),Math.round(ay+d[1]*(g.len-2)),3,3);
+ }
+ _pCache[key]=c;return c;}
+
+/* ==================== §6 TABLES：武器表 ==================== */
+const WEAPONS={
+ nail:   {nm:'骨钉枪',    rate:0.28,spd:300,dmg:1,  ammo:Infinity,bcol:'#e8dcc8',bw:5,bh:2,sfx:'shoot',gun:{len:8,col:'#8a96a8'}},
+ drill:  {nm:'骨钻冲锋枪',rate:0.09,spd:340,dmg:1,  ammo:200,spread:0.08,pierce:1,bcol:'#c8d4e0',bw:4,bh:2,sfx:'mg',gun:{len:9,col:'#5a6678',col2:'#c8d4e0'}}, // 穿透1个敌人
+ plate:  {nm:'钢板抛射器',rate:0.6,spd:260,dmg:4,  ammo:40,grav:520,bounce:2,bcol:'#8a96a8',bw:7,bh:3,sfx:'plate',gun:{len:8,col:'#3a4252',col2:'#8a96a8'}},
+ cement: {nm:'骨水泥喷射器',rate:0.05,spd:180,dmg:0.34,ammo:150,range:0.5,slow:2.2,spread:0.25,bcol:'#e8e4da',bw:3,bh:3,sfx:'cement',gun:{len:7,col:'#bfae8e',col2:'#e8dcc8'}},
+ fixator:{nm:'外固定架风暴',rate:0.5,spd:280,dmg:1.6,ammo:60,burst:5,homing:0.06,bcol:'#62d6c8',bw:5,bh:2,sfx:'fix',gun:{len:10,col:'#3a9e92',col2:'#62d6c8'}},
+ gatling:{nm:'椎弓根钉加特林',rate:0.05,spd:380,dmg:1.2,ammo:300,spread:0.05,bcol:'#f2c94c',bw:5,bh:2,sfx:'mg',gun:{len:11,col:'#5a4632',col2:'#f2c94c'}}};
+const RANKS=['实习医生','住院医师','主治医师','副主任医师','主任医师'];
+const RANK_COL=['#8a96a8','#62d6c8','#3d6fd6','#d678c8','#f2c94c'];
+
+/* ==================== 全局游戏状态 ==================== */
+const G={score:0,lives:HARD.initialLives,rank:0,lvl:0,weapon:'nail',ammo:0,nades:HARD.initialNades,shield:0,energy:0,
+ rescued:0,superT:0,adrT:0,stunT:0,slowMo:1,
+ reset(){this.score=0;this.lives=HARD.initialLives;this.rank=0;this.lvl=0;this.weapon='nail';this.ammo=0;
+  this.nades=HARD.initialNades;this.shield=0;this.energy=0;this.rescued=0;this.superT=0;this.adrT=0;this.stunT=0;this.slowMo=1;},
+ setWeapon(w,ammo){this.weapon=w;this.ammo=ammo!==undefined?ammo:WEAPONS[w].ammo;},
+ addScore(n,x,y){this.score+=n;if(x!==undefined)Floaters.add(x,y,'+'+n);}};
+
+/* ==================== §7a 实体容器 ==================== */
+const Ents={list:[],
+ add(e){this.list.push(e);return e;},
+ all(){return this.list;},
+ enemies(){return this.list.filter(e=>e.isEnemy&&!e.dead);},
+ clear(){this.list=[];},
+ update(dt){for(let i=this.list.length-1;i>=0;i--){const e=this.list[i];
+  e.upd(dt,e);if(e.gone)this.list.splice(i,1);}},
+ draw(){for(const e of this.list)e.drw(e);}};
+// 地面查询（Level 系统就绪前的全局桩；Level 会覆盖）
+let groundY=x=>230;
+let solids=[]; // 平台 {x,y,w,h}（单向，从上落）
+
+/* ==================== §7b 子弹 ==================== */
+const Bullets={list:[],
+ fire(x,y,dx,dy,wname,hostile){const w=WEAPONS[wname];
+  const n=w.burst||1;
+  for(let i=0;i<n;i++){const sp=(w.spread||0)*(Math.random()-0.5)*2+(w.burst?(i-(n-1)/2)*0.12:0);
+   const cos=Math.cos(sp),sin=Math.sin(sp);
+   const ndx=dx*cos-dy*sin,ndy=dx*sin+dy*cos;
+   this.list.push({x,y,vx:ndx*w.spd,vy:ndy*w.spd,dmg:w.dmg*(G.adrT>0?1.2:1),
+    grav:w.grav||0,bounce:w.bounce||0,life:w.range||1.6,t:0,hostile:!!hostile,
+    slow:w.slow||0,homing:w.homing||0,pierce:w.pierce||0,col:w.bcol,bw:w.bw,bh:w.bh});}
+  Audio2.sfx(w.sfx);},
+ // 敌方弹（自定义）
+ hostile(x,y,vx,vy,o){const li=(typeof Level!=='undefined'&&Level.cur)?Level.idx:0,hs=1+li*HARD.hostileSpeedPerLevel;
+  this.list.push({x,y,vx:vx*hs,vy:vy*hs,dmg:1,grav:(o&&o.grav)||0,bounce:0,
+  life:(o&&o.life)||3,t:0,hostile:true,slow:0,homing:0,col:(o&&o.col)||'#ff8a7a',
+  bw:(o&&o.bw)||4,bh:(o&&o.bh)||4,stun:o&&o.stun,gel:o&&o.gel});},
+ update(dt0){for(let i=this.list.length-1;i>=0;i--){const b=this.list[i];
+  const dt=(b.hostile&&G.adrT>0)?dt0*0.55:dt0; // 肾上腺素子弹时间：敌弹减速
+  b.t+=dt;
+  if(b.t>b.life){this.list.splice(i,1);continue;}
+  if(b.homing&&!b.hostile){const es=Ents.enemies();let best=null,bd=1e9;
+   for(const e of es){const d=dist2(b.x,b.y,e.x,e.y-e.h/2);if(d<bd){bd=d;best=e;}}
+   if(best){const a=Math.atan2(best.y-best.h/2-b.y,best.x-b.x),cur=Math.atan2(b.vy,b.vx);
+    const na=cur+clamp(a-cur,-b.homing,b.homing);const sp=Math.hypot(b.vx,b.vy);
+    b.vx=Math.cos(na)*sp;b.vy=Math.sin(na)*sp;}}
+  b.vy+=b.grav*dt;b.x+=b.vx*dt;b.y+=b.vy*dt;
+  const gy=groundY(b.x);
+  if(gy!==null&&b.y>gy){if(b.bounce>0){b.bounce--;b.y=gy;b.vy=-Math.abs(b.vy)*0.7;Audio2.sfx('hit');}
+   else{if(b.gel&&typeof Hazards!=='undefined')Hazards.add(b.x,gy);this.list.splice(i,1);Particles.spawn(b.x,gy,{n:3,col:b.col,spd:40,life:0.3});continue;}}
+  if(b.x<cam.x-40||b.x>cam.x+VW+40||b.y<-60){this.list.splice(i,1);continue;}
+  if(b.hostile){ // 命中载具或玩家
+   if(typeof Veh!=='undefined'&&Veh.hitByBullet(b)){this.list.splice(i,1);continue;}
+   if(player&&player.state==='normal'&&player.invT<=0&&!player.inVeh&&
+    Math.abs(b.x-player.x)<8&&b.y>player.top()&&b.y<player.y){
+    if(b.stun){G.stunT=2.5;Audio2.sfx('stun');Floaters.add(player.x,player.top()-10,'拒付单！','#f2f6fa');}
+    else killPlayer();
+    this.list.splice(i,1);continue;}
+  }else{ // 命中敌人
+   let used=false;
+   for(const e of Ents.enemies()){
+    if(e===b.lastHit)continue;
+    if(Math.abs(b.x-e.x)<e.w/2+3&&b.y>e.y-e.h-3&&b.y<e.y+3){
+     const r=hurtEnemy(e,b.dmg,b);
+     if(r===2)used=true;                      // 被盾格挡：弹消失
+     else if(b.pierce>0){b.pierce--;b.lastHit=e;} // 骨钻穿透
+     else used=true;
+     break;}}
+   if(!used&&typeof Boss!=='undefined'&&Boss.cur&&Boss.cur.hp>0&&Boss.hitTest(b))used=true;
+   if(used){this.list.splice(i,1);continue;}}
+ }},
+ draw(){for(const b of this.list){rect(b.x-b.bw/2,b.y-b.bh/2,b.bw,b.bh,b.col);}},
+ clear(){this.list=[];}};
+function hurtEnemy(e,dmg,b){
+ if(e.ai==='shield'&&b&&((b.vx>0&&e.face<0)||(b.vx<0&&e.face>0))&&!b.isNade){ // 正面格挡
+  Audio2.sfx('hit');Particles.spawn(b.x,b.y,{n:3,col:'#f2c94c',spd:50,life:0.2});return 2;}
+ if(e.slowT>0)dmg*=1.5; // 骨水泥固化：易碎，受伤+50%
+ e.hp-=dmg;e.flash=0.06;if(b&&b.slow)e.slowT=b.slow;
+ if(e.hp<=0)killEnemy(e);else Audio2.sfx('hit');
+ return 1;}
+function killEnemy(e){if(e.dead)return;e.dead=true;e.gone=true;
+ Particles.bone(e.x,e.y-e.h/2);Audio2.sfx('crack');
+ G.addScore(e.score,e.x,e.y-e.h);
+ if(G.superT<=0)G.energy=Math.min(100,G.energy+4);
+ if(typeof dropLoot==='function')dropLoot(e.x,e.y);}
+
+/* ==================== §7c 手雷 ==================== */
+const Nades={list:[],
+ throw_(x,y,dir){if(G.nades<=0)return;G.nades--;Audio2.sfx('nade');
+  let vx=dir*150,vy=-260;
+  if(Input.usingMouse){const a=Input.aim(x,y);vx=a.dx*170;vy=Math.min(-140,a.dy*170-160);}
+  this.list.push({x,y,vx,vy,t:0});},
+ update(dt){for(let i=this.list.length-1;i>=0;i--){const n=this.list[i];n.t+=dt;n.vy+=GRAV*dt;
+  n.x+=n.vx*dt;n.y+=n.vy*dt;const gy=groundY(n.x);
+  if((gy!==null&&n.y>=gy)||n.t>2){this.list.splice(i,1);explode(n.x,gy!==null?gy:n.y,34,4,true);
+   for(let k=0;k<4;k++){const a=-Math.PI*rnd(0.15,0.85);
+    this.list2().push({x:n.x,y:(gy||n.y)-2,vx:Math.cos(a)*140,vy:Math.sin(a)*140,dmg:1,grav:500,
+     bounce:0,life:0.8,t:0,hostile:false,slow:0,homing:0,col:'#e8dcc8',bw:3,bh:3,isNade:true});}}}},
+ list2(){return Bullets.list;},
+ draw(){for(const n of this.list){rect(n.x-3,n.y-3,6,6,'#e8dcc8');rect(n.x-1,n.y-5,2,2,'#8a96a8');}},
+ clear(){this.list=[];}};
+function explode(x,y,r,dmg,friendly){
+ Particles.spawn(x,y,{n:16,col:['#f2c94c','#e8853d','#f2f6fa'],spd:140,up:60,life:0.5,grav:200});
+ Audio2.sfx('boom');camShake(2);
+ if(friendly){for(const e of Ents.enemies()){
+   if(dist2(e.x,e.y-e.h/2,x,y)<(r+e.w/2)*(r+e.w/2))hurtEnemy(e,dmg,{isNade:true,vx:e.x-x});}
+  if(typeof Boss!=='undefined'&&Boss.cur&&Boss.cur.hp>0&&dist2(Boss.cur.x,Boss.cur.y-Boss.cur.h/2,x,y)<(r+Boss.cur.w/2)**2)Boss.hurt(dmg);
+  for(const e of Ents.all())if(e.isProp&&dist2(e.x,e.y-e.h/2,x,y)<(r+10)**2&&!e.dead)e.hurt&&e.hurt(2);}
+ else if(player&&player.state==='normal'&&player.invT<=0&&!player.inVeh&&
+  dist2(player.x,player.y-12,x,y)<r*r)killPlayer();}
+
+/* ==================== §7d 玩家：老铁 ==================== */
+const player={x:60,y:230,vx:0,vy:0,onG:true,face:1,state:'normal',deadT:0,invT:0,
+ idleT:0,idleAct:null,fireCd:0,meleeT:0,legT:0,legF:0,inVeh:null,
+ top(){return this.y-(this.crouch?16:30);},
+ crouch:false,
+ reset(x,y){this.x=x;this.y=y;this.vx=this.vy=0;this.state='normal';this.invT=2;
+  this.inVeh=null;this.crouch=false;this.idleT=0;this.idleAct=null;},
+ update(dt){
+  if(this.state==='dead'){this.deadT+=dt;
+   if(this.deadT>1.2)respawn();
+   return;}
+  if(this.invT>0)this.invT-=dt;
+  if(this.inVeh){Veh.drive(dt);return;}
+  const spd=(110+G.rank*6)*(G.stunT>0?0.6:1);
+  const flip=G.stunT>0?-1:1; // 拒付单眩晕：操作反转
+  let mv=((Input.r?1:0)-(Input.l?1:0))*flip;
+  this.crouch=Input.down&&this.onG;
+  if(this.crouch)mv*=0.4;
+  this.vx=mv*spd;
+  if(Input.jumpP&&this.onG){this.vy=-330;this.onG=false;Audio2.sfx('jump');}
+  this.vy+=GRAV*dt;
+  const ox=this.x;
+  this.x+=this.vx*dt;this.y+=this.vy*dt;
+  // 不许退出镜头左缘；锁定战斗时也不许越过竞技场右缘
+  const rEdge=cam.lockX!==null?cam.lockX+VW-10:1e9;
+  this.x=clamp(this.x,cam.x+8,rEdge);
+  // 台阶墙体：前方地面高出脚下14px以上视为墙，需跳跃越过
+  const gw=groundY(this.x);
+  if(gw!==null&&this.y-gw>14)this.x=ox;
+  // 落地
+  let gy=groundY(this.x);
+  if(this.vy>=0){for(const s of solids){if(this.x>s.x&&this.x<s.x+s.w&&this.y>=s.y&&this.y-this.vy*dt<=s.y+4){gy=s.y;break;}}}
+  if(gy!==null&&this.y>=gy&&this.vy>=0){this.y=gy;this.vy=0;this.onG=true;}
+  else this.onG=false;
+  if(gy===null&&this.y>VH+30){killPlayer(true);return;} // 坠落
+  // 朝向与瞄准
+  if(Input.usingMouse){this.face=(Input.mx+cam.x)>=this.x?1:-1;}
+  else if(mv!==0)this.face=mv>0?1:-1;
+  // 跑步动画
+  if(Math.abs(this.vx)>1&&this.onG){this.legT+=dt;if(this.legT>0.07){this.legT=0;this.legF=(this.legF+1)&3;}}
+  // 闲置彩蛋
+  if(mv===0&&this.onG&&!Input.fire){this.idleT+=dt;
+   if(this.idleT>6&&!this.idleAct){this.idleAct=chance(0.5)?'wipe':'spin';this.idleT=0;}
+   if(this.idleAct&&this.idleT>2.2){this.idleAct=null;this.idleT=0;}}
+  else{this.idleT=0;this.idleAct=null;}
+  // 攻击
+  this.fireCd-=dt*(G.adrT>0?1.6:1);
+  if(this.meleeT>0)this.meleeT-=dt;
+  if(Input.fire&&this.fireCd<=0)this.attack();
+  if(Input.nadeP)Nades.throw_(this.x,this.y-22,this.face);
+ },
+ aimVec(){const mx=this.x+this.face*10,my=this.y-(this.crouch?10:20);
+  if(Input.usingMouse){return Input.aim(mx,my);}
+  let dx=this.face,dy=0;
+  if(Input.up){dy=-1;dx=0;}
+  if(Input.down&&!this.onG){dy=1;dx=0;}
+  return{dx,dy};},
+ aimPose(){const a=this.aimVec();
+  if(a.dy<-0.85)return 3; if(a.dy<-0.3)return 2; if(a.dy>0.3)return 0; return 1;},
+ attack(){
+  // 外骨骼形态：电锯近战 + 三向钉枪风暴
+  if(G.superT>0){this.fireCd=0.04;
+   for(const e of Ents.enemies()){const dx=(e.x-this.x)*this.face;
+    if(dx>-6&&dx<34&&Math.abs(e.y-this.y)<30){hurtEnemy(e,6,{isNade:true});Audio2.sfx('melee');}}
+   const a=this.aimVec(),mx=this.x+this.face*12,my=this.y-22;
+   let dx=a.dx,dy=a.dy;if(dx===0&&dy===0)dx=this.face;
+   for(let i=-1;i<=1;i++){const an=Math.atan2(dy,dx)+i*0.16;
+    Bullets.list.push({x:mx,y:my,vx:Math.cos(an)*380,vy:Math.sin(an)*380,dmg:2,grav:0,bounce:0,
+     life:1.2,t:0,hostile:false,slow:0,homing:0,col:'#62d6c8',bw:5,bh:2});}
+   Audio2.sfx('mg');return;}
+  // 近战检测：前方26px内有敌人
+  let close=null;
+  for(const e of Ents.enemies()){const dx=(e.x-this.x)*this.face;
+   if(dx>-4&&dx<26&&Math.abs(e.y-this.y)<26){close=e;break;}}
+  const w=WEAPONS[G.weapon];
+  if(close){this.meleeT=0.18;this.fireCd=0.3;Audio2.sfx('melee');
+   hurtEnemy(close,3,{isNade:true});if(!close.dead){close.x+=this.face*10;close.kb=this.face*120;}
+   // 锤子可打掉身前敌弹
+   for(let i=Bullets.list.length-1;i>=0;i--){const b=Bullets.list[i];
+    if(b.hostile&&Math.abs(b.x-this.x)<30&&Math.abs(b.y-(this.y-14))<20)Bullets.list.splice(i,1);}
+   return;}
+  if(w.ammo!==Infinity){if(G.ammo<=0){G.setWeapon('nail');return;}G.ammo--;}
+  this.fireCd=w.rate;
+  const a=this.aimVec(),mx=this.x+this.face*10,my=this.y-(this.crouch?10:20);
+  let dx=a.dx,dy=a.dy;
+  if(!Input.usingMouse&&dx===0&&dy===0)dx=this.face;
+  Bullets.fire(mx+dx*6,my+dy*6,dx,dy,G.weapon,false);
+  Particles.spawn(mx+dx*10,my+dy*10,{n:2,col:'#ffe9b0',spd:30,life:0.12,grav:0});
+ },
+ draw(){
+  if(this.inVeh)return;
+  if(this.invT>0&&Math.floor(this.invT*12)%2===0&&this.state==='normal')return; // 无敌闪烁
+  if(this.state==='dead'){const f=this.deadT>0.5?1:0;
+   drawSpr(bakePlayer({dead:f}),this.x,this.y,this.face<0);return;}
+  const w=WEAPONS[G.weapon];
+  const legs=this.crouch?'crouch':(!this.onG?'jump':(Math.abs(this.vx)>1?'run':'idle'));
+  const o={legs,legF:this.legF,aim:this.aimPose(),gun:w.gun,cape:G.rank>=4};
+  if(this.meleeT>0)o.melee=this.meleeT>0.09?1:2;
+  else if(this.idleAct==='wipe')o.wipe=true;
+  else if(this.idleAct==='spin')o.spin=Math.floor(this.idleT*6)%2;
+  if(G.superT>0){drawSuit(this.x,this.y,this.face);return;}
+  drawSpr(bakePlayer(o),this.x,this.y+(this.crouch?0:0),this.face<0);
+ }};
+// 大招：手术机器人外骨骼形象
+function drawSuit(x,y,face){
+ const fl=face<0,d=fl?-1:1,t=_last/100;
+ // 机甲腿
+ rect(x-10,y-12,6,12,'#3a9e92');rect(x+4,y-12,6,12,'#3a9e92');
+ rect(x-12,y-3,9,3,'#62d6c8');rect(x+3,y-3,9,3,'#62d6c8');
+ // 机甲躯干框架
+ rect(x-12,y-34,24,22,'#3a9e92');rect(x-10,y-32,20,18,'#1a2233');
+ // 驾驶舱里的老铁（微笑头像）
+ const img=bakePlayer({legs:'crouch',legF:0,aim:1,gun:{len:0,col:'#8a96a8'}});
+ ctx.save();ctx.beginPath();ctx.rect(Math.round(x-cam.x-9),Math.round(y-31),18,16);ctx.clip();
+ drawSpr(img,x,y-8,fl);ctx.restore();
+ // 机械臂电锯（旋转齿）
+ const ax=x+d*16;
+ rect(x+d*8,y-26,d*10,4,'#3a9e92');
+ ctx.fillStyle='#c8d4e0';
+ for(let i=0;i<6;i++){const an=t+i;
+  rect(ax+Math.cos(an)*7,y-24+Math.sin(an)*7,3,3,'#c8d4e0');}
+ rect(ax-3,y-27,6,6,'#8a96a8');
+ // 钉枪风暴炮管
+ for(let i=0;i<3;i++)rect(x+d*10,y-36+i*3,d*12,2,'#f2c94c');
+ // 能量光晕
+ ctx.globalAlpha=0.25+Math.sin(t*2)*0.1;
+ rect(x-16,y-40,32,40,'#62d6c8');ctx.globalAlpha=1;}
+function killPlayer(fall){
+ if(god||player.invT>0&&!fall||player.state!=='normal'||G.superT>0)return;
+ if(G.shield>0&&!fall){G.shield=0;player.invT=1.5;Audio2.sfx('crack');
+  Floaters.add(player.x,player.top()-8,'接骨板碎裂！','#c8d4e0');return;}
+ player.state='dead';player.deadT=0;Audio2.sfx('die');camShake(2);
+ Particles.spawn(player.x,player.y-26,{n:1,col:'#10131a',spd:80,up:120,life:0.9}); // 眼镜飞出
+ Particles.blood(player.x,player.y-14);}
+function respawn(){
+ G.lives--;
+ if(G.lives<=0){if(typeof gameOver==='function')gameOver();else{G.reset();player.reset(60,230);}return;}
+ const cp=(typeof Level!=='undefined'&&Level.cur)?Level.checkpointX:60;
+ // 清场：敌弹、危害区、波次锁
+ for(let i=Bullets.list.length-1;i>=0;i--)if(Bullets.list[i].hostile)Bullets.list.splice(i,1);
+ Hazards.clear();
+ if(typeof Level!=='undefined'){Level.wave=null;}
+ cam.lockX=null;
+ if(typeof Boss!=='undefined'&&Boss.cur&&Level.bossOn)cam.lockX=Boss.cur.ax; // BOSS战保持锁定竞技场
+ cam.x=cam.lockX!==null?cam.lockX:Math.max(0,cp-VW*0.4);
+ player.reset(Math.max(cp,cam.x+20),groundY(cp)||230);}
+
+/* ==================== §3b 敌人精灵（字符串画板） ==================== */
+const ESPR={
+slime:bakeAnim([[
+'....wwwwww......',
+'..wwWWWWWWww....',
+'.wWW0WWW0WWWw...',
+'wWWWWWWWWWWWWw..',
+'.wwwwwwwwwwww...'],[
+'..wwwwwwwwww....',
+'.wWW0WWW0WWWww..',
+'wWWWWWWWWWWWWWw.',
+'wwwwwwwwwwwwwww.',
+'................']]),
+spider:bakeAnim([[
+'..s...ss...s....',
+'...s.sSSs.s.....',
+'..ssSS00SSss....',
+'.s..SSSSSS..s...',
+'.s..s.ss.s..s...',
+'s...s....s...s..'],[
+'.s....ss....s...',
+'..s..sSSs..s....',
+'..ssSS00SSss....',
+'.s..SSSSSS..s...',
+'..s.s.ss.s.s....',
+'.s..s....s..s...']]),
+fly:bakeAnim([[
+'.ww....ww...',
+'..wwwwww....',
+'.sSS00SSs...',
+'..SSSSSS....',
+'...s..s.....'],[
+'............',
+'..wwwwww....',
+'.sSS00SSs...',
+'..SSSSSS....',
+'..s....s....']]),
+zombie:bakeAnim([[
+'...WWWWWW.....',
+'..WW0WW0WW....',
+'..WWWWWWWW....',
+'...WWggWW.....',
+'..WWWWWWWWW...',
+'.WsWWWWWWsW...',
+'.W.WWggWWW....',
+'...WWWWWW.....',
+'...WW..WW.....',
+'...WW..WWW....',
+'..WWW...WW....',
+'..gg....gg....'],[
+'...WWWWWW.....',
+'..WW0WW0WW....',
+'..WWWWWWWW....',
+'...WWggWW.....',
+'..WWWWWWWWW...',
+'.WsWWWWWWsW...',
+'.W.WWggWWW....',
+'...WWWWWW.....',
+'..WW...WW.....',
+'.WW....WW.....',
+'.WW.....WWW...',
+'.gg.....gg....']]),
+shooter:bakeAnim([[
+'...SSSS.......',
+'..S0SS0S......',
+'..SSSSSS......',
+'...SSSS..C....',
+'..SSSSSSCC....',
+'.SsSSSSsCWWWWR',
+'..SSSSSS.C....',
+'...S..S.......',
+'..SS..SS......',
+'..S....S......']]),
+shield:bakeAnim([[
+'WW...SSSS.....',
+'WW..S0SS0S....',
+'WW..SSSSSS....',
+'WWW..SSSS.....',
+'WW.SSSSSSS....',
+'WW.SSSSSSSs...',
+'WW.SSSSSSS....',
+'WWW.SSSS......',
+'WW..SS.SS.....',
+'WW..SS..SS....',
+'WW..ss..ss....'],[
+'WW...SSSS.....',
+'WW..S0SS0S....',
+'WW..SSSSSS....',
+'WWW..SSSS.....',
+'WW.SSSSSSS....',
+'WW.SSSSSSSs...',
+'WW.SSSSSSS....',
+'WWW.SSSS......',
+'WW...SSSS.....',
+'WW..SS..SS....',
+'WW..ss..ss....']]),
+patient:bakeAnim([[
+'...EEEE.......',
+'..E0EE0E......',
+'..EEEEEE......',
+'..KEEEEK......',
+'.KGGGGGGK.....',
+'.KGGGGGGK.....',
+'..GGGGGG......',
+'..NN..NN......',
+'.kkkkkkkk.....',
+'.kk....kk.....']]),
+flag:bakeAnim([[
+'K.RRRRRRRR',
+'K.RRYYYYRR',
+'K.RRYRRYRR',
+'K.RRYYYYRR',
+'K.RRRRRRRR',
+'K.........',
+'K.........',
+'K.........']]),
+chair:bakeAnim([[
+'.gggggggg.',
+'.g......g.',
+'.g......g.',
+'.gggggggg.',
+'.g......g.',
+'.g......g.']]),
+skelProp:bakeAnim([[
+'...WWW....',
+'..W0W0W...',
+'...WWW....',
+'....W.....',
+'..WWWWW...',
+'....W.....',
+'..WWWWW...',
+'....W.....',
+'...W.W....',
+'..W...W...',
+'.W.....W..']]),
+cabinet:bakeAnim([[
+'gGGGGGGGGGg',
+'gGWWGGWWGGg',
+'gGWRGGWBGGg',
+'gGGGGGGGGGg',
+'gGWBGGWRGGg',
+'gGWWGGWWGGg',
+'gGGGGGGGGGg',
+'gg.......gg']]),
+};
+
+/* ==================== §6b 敌人表 ==================== */
+const ENEMIES={
+ slime:  {nm:'软骨黏怪',  hp:2,spd:28,score:100,ai:'crawl', w:14,h:6},
+ spider: {nm:'关节蛛',    hp:2,spd:60,score:150,ai:'pounce',w:14,h:7},
+ fly:    {nm:'骨刺飞虫',  hp:1,spd:80,score:150,ai:'dive',  w:11,h:6},
+ zombie: {nm:'石膏丧尸',  hp:8,spd:18,score:300,ai:'walk',  w:12,h:24},
+ shooter:{nm:'注射器射手',hp:3,spd:0, score:250,ai:'lob',   w:12,h:20},
+ shield: {nm:'骨板盾兵',  hp:6,spd:30,score:500,ai:'shield',w:14,h:22}};
+function spawnEnemy(type,x,yOff){const d=ENEMIES[type];
+ const gy=groundY(x);const y=(d.ai==='dive')?(120+(yOff||0)):(gy!==null?gy:230);
+ const li=(typeof Level!=='undefined'&&Level.cur)?Level.idx:0; // 敌人随关卡强化
+ return Ents.add({isEnemy:true,type,ai:d.ai,hp:Math.ceil(d.hp*HARD.enemyHp*(1+li*HARD.perLevelHp)),spd:d.spd*HARD.enemySpeed*(1+li*HARD.perLevelSpeed),score:d.score,w:d.w,h:d.h,
+  x,y,y0:y,vx:0,vy:0,face:-1,t:rnd(0,1),phase:0,flash:0,slowT:0,kb:0,dead:false,
+  upd:enemyUpd,drw:enemyDrw});}
+function enemyUpd(dt,e){
+ const ts=(G.adrT>0?0.55:1)*(e.slowT>0?0.4:1);dt*=ts;
+ e.t+=dt;if(e.flash>0)e.flash-=dt;if(e.slowT>0)e.slowT-=dt;
+ if(e.kb){e.x+=e.kb*dt;e.kb*=0.8;if(Math.abs(e.kb)<5)e.kb=0;}
+ const px=player.x,toP=px-e.x;e.face=toP>0?1:-1;
+ switch(e.ai){
+ case 'crawl':e.x+=e.face*e.spd*dt;snapGround(e);break;
+ case 'pounce':
+  if(e.phase===0){e.x+=e.face*e.spd*dt;snapGround(e);
+   if(Math.abs(toP)<96){e.phase=1;e.t=0;}}
+  else if(e.phase===1){if(e.t>0.5){e.phase=2;e.vx=e.face*200;e.vy=-285;}}
+  else{e.vy+=GRAV*dt;e.x+=e.vx*dt;e.y+=e.vy*dt;const gy=groundY(e.x);
+   if(gy!==null&&e.y>=gy&&e.vy>0){e.y=gy;e.phase=0;e.t=0;}}
+  break;
+ case 'dive':
+  if(e.phase===0){e.y=e.y0+Math.sin(e.t*3)*12;e.x+=e.face*e.spd*0.4*dt;
+   if(Math.abs(toP)<90&&player.y-e.y>20){e.phase=1;
+    const l=Math.hypot(toP,player.y-14-e.y)||1;e.vx=toP/l*235;e.vy=(player.y-14-e.y)/l*235;}}
+  else{e.x+=e.vx*dt;e.y+=e.vy*dt;const gy=groundY(e.x);
+   if((gy!==null&&e.y>gy-4)||e.y<40){e.phase=0;e.t=0;e.y0=Math.min(e.y,140);}}
+  break;
+ case 'walk':if(e.flash<=0){e.x+=e.face*e.spd*dt;}snapGround(e);break;
+ case 'lob':
+  if(e.t>1.8){e.t=0;const dx=toP,fall=player.y-(e.y-14);
+   const t0=0.9,vx=dx/t0,vy=(fall-0.5*GRAV*t0*t0)/t0;
+   Bullets.hostile(e.x,e.y-14,clamp(vx,-180,180),clamp(vy,-300,100),{grav:GRAV,col:'#62d6c8',bw:5,bh:2});
+   Audio2.sfx('shoot');}
+  break;
+ case 'shield':e.x+=e.face*e.spd*dt;snapGround(e);break;}
+ // 碰玩家（外骨骼期反杀；载具碰撞由 Veh 处理）
+ if(Math.abs(e.x-player.x)<(e.w+10)/2&&player.y>e.y-e.h-4&&player.top()<e.y){
+  if(G.superT>0)killEnemy(e);
+  else if(player.state==='normal'&&player.invT<=0&&!player.inVeh)killPlayer();}
+}
+function snapGround(e){const gy=groundY(e.x);
+ if(gy===null||e.y-gy>14){e.face*=-1;e.x+=e.face*2;} // 悬崖或高墙：折返
+ else e.y=gy;}
+function enemyDrw(e){const sp=ESPR[e.type];const f=(e.ai==='lob')?0:Math.floor(e.t*6)%sp.length;
+ if(e.flash>0){ctx.globalAlpha=0.5;}
+ if(e.slowT>0){ctx.globalAlpha=0.7;}
+ // 盾兵画板默认朝左（盾在左列），其余画板默认朝右
+ drawSpr(sp[f],e.x,e.y,e.type==='shield'?e.face>0:e.face<0);
+ ctx.globalAlpha=1;
+ if(e.ai==='pounce'&&e.phase===1)rect(e.x-2,e.y-e.h-6,4,2,'#f2c94c'); // 蓄力提示
+}
+
+/* ==================== §7e 地面危害区（凝胶等） ==================== */
+const Hazards={list:[],
+ add(x,y){this.list.push({x,y,t:0});},
+ update(dt){for(let i=this.list.length-1;i>=0;i--){const h=this.list[i];h.t+=dt;
+  if(h.t>1.5){this.list.splice(i,1);continue;}
+  if(player.state==='normal'&&player.invT<=0&&!player.inVeh&&
+   Math.abs(player.x-h.x)<12&&Math.abs(player.y-h.y)<8)killPlayer();}},
+ draw(){for(const h of this.list){ctx.globalAlpha=0.7*(1-h.t/1.5);
+  rect(h.x-10,h.y-3,20,4,'#d678c8');ctx.globalAlpha=1;}},
+ clear(){this.list=[];}};
+
+/* ==================== §7f 道具/掉落/救援/可破坏物 ==================== */
+const ITEM_DEF={
+ adr:   {nm:'肾上腺素',col:'#d63d3d',txt:'攻速提升+子弹时间!'},
+ shield:{nm:'金属接骨板',col:'#c8d4e0',txt:'护盾+1'},
+ nades: {nm:'手雷包',col:'#e8dcc8',txt:'手雷+4'},
+ ammo:  {nm:'弹药箱',col:'#f2c94c',txt:'弹药补给'},
+ life:  {nm:'加命',col:'#9ef27a',txt:'1UP!'},
+};
+function spawnItem(kind,x,y,wname,fixed){Ents.add({isPickup:true,kind,wname,fixed,x,y:y!==undefined?y:(groundY(x)||230),vy:fixed?0:-120,t:0,
+ upd(dt,e){e.t+=dt;
+  if(!e.fixed){e.vy+=500*dt;e.y+=e.vy*dt;const gy=groundY(e.x);
+  if(gy!==null&&e.y>gy){e.y=gy;e.vy=0;}}
+  if(e.t>14)e.gone=true;
+  if(player.state==='normal'&&Math.abs(e.x-player.x)<12&&Math.abs(e.y-player.y)<24){e.gone=true;pickup(e);}},
+ drw(e){if(e.t>11&&Math.floor(e.t*8)%2)return;
+  if(e.kind==='weapon'){rect(e.x-6,e.y-9,12,9,'#5a4632');rect(e.x-5,e.y-8,10,7,'#8a96a8');
+   txt('W',e.x-cam.x-3,e.y-9,'#f2c94c',8);}
+  else{const d=ITEM_DEF[e.kind];rect(e.x-5,e.y-9,10,9,d.col);rect(e.x-5,e.y-9,10,2,'#f2f6fa');}}});}
+function pickup(e){Audio2.sfx('pickup');
+ const d=e.kind==='weapon'?{txt:WEAPONS[e.wname].nm+'!'}:ITEM_DEF[e.kind];
+ Floaters.add(e.x,e.y-16,d.txt,'#9ef27a');
+ switch(e.kind){
+ case 'adr':G.adrT=8;break;
+ case 'shield':G.shield=1;break;
+ case 'nades':G.nades=Math.min(12,G.nades+4);break;
+ case 'ammo':{const w=WEAPONS[G.weapon];if(w.ammo!==Infinity)G.ammo=Math.min(w.ammo,G.ammo+Math.ceil(w.ammo*0.5));break;}
+ case 'life':G.lives++;break;
+ case 'weapon':G.setWeapon(e.wname);break;}}
+function dropLoot(x,y){
+ if(chance(0.08))spawnItem('nades',x,y);
+ else if(chance(0.05))spawnItem('ammo',x,y);
+ else if(chance(0.03))spawnItem('shield',x,y);}
+// 救援对象：候诊椅上的病人
+function spawnRescue(x){Ents.add({isRescue:true,x,y:groundY(x)||230,t:0,freed:false,
+ upd(dt,e){if(e.freed){e.t+=dt;if(e.t>2)e.gone=true;return;}
+  if(player.state==='normal'&&Math.abs(e.x-player.x)<18&&Input.fireP){
+   e.freed=true;e.t=0;Audio2.sfx('rescue');G.rescued++;
+   G.addScore(2000,e.x,e.y-30);Floaters.add(e.x,e.y-40,'锦旗 获得!','#f2c94c');
+   G.energy=Math.min(100,G.energy+20);
+   if(chance(0.3))spawnItem(['adr','shield','nades','ammo'][irnd(0,3)],e.x+14);}},
+ drw(e){drawSpr(ESPR.chair[0],e.x,e.y,false);
+  if(!e.freed){drawSpr(ESPR.patient[0],e.x,e.y-3,false);
+   rect(e.x-7,e.y-14,14,2,'#5a4632'); // 绑绳
+   if(Math.floor(_last/500)%2)txt('救命!',e.x-cam.x-10,e.y-38,'#f2f6fa',8);}
+  else{drawSpr(ESPR.patient[0],e.x,e.y-Math.min(6,e.t*8),false);
+   drawSpr(ESPR.flag[0],e.x+2,e.y-26-e.t*10,false);}}});}
+// 可破坏物
+function spawnProp(kind,x){const hp=kind==='cabinet'?2:3;
+ Ents.add({isProp:true,kind,hp,x,y:groundY(x)||230,w:12,h:kind==='cabinet'?16:22,dead:false,
+ hurt(d){this.hp-=d;Audio2.sfx('hit');
+  if(this.hp<=0&&!this.dead){this.dead=true;this.gone=true;
+   if(this.kind==='cabinet'){explode(this.x,this.y-8,40,3,true);
+    Particles.spawn(this.x,this.y-8,{n:10,col:['#d63d3d','#3d6fd6','#f2f6fa'],spd:100,life:0.5});
+    if(chance(0.5))spawnItem(['nades','ammo','adr'][irnd(0,2)],this.x);}
+   else{Particles.bone(this.x,this.y-10);G.addScore(50,this.x,this.y-20);}}},
+ upd(dt,e){},drw(e){drawSpr(e.kind==='cabinet'?ESPR.cabinet[0]:ESPR.skelProp[0],e.x,e.y,false);}});}
+
+/* ==================== §7g 载具：轮椅加特林 ==================== */
+const Veh={cur:null,
+ spawn(x){this.cur={x,y:groundY(x)||230,hp:18,maxHp:18,vy:0,onG:true,face:1,fireCd:0,t:0,mounted:false};},
+ update(dt){const v=this.cur;if(!v)return;v.t+=dt;
+  if(!v.mounted&&player.state==='normal'&&Math.abs(player.x-v.x)<22&&Input.vehP){
+   v.mounted=true;player.inVeh=v;v.mountCd=0.3;Audio2.sfx('veh');
+   Floaters.add(v.x,v.y-34,'轮椅加特林! 启动!','#62d6c8');}
+  // 敌方子弹打载具在 Bullets 中处理
+ },
+ drive(dt){const v=this.cur;if(!v)return;
+  const mv=(Input.r?1:0)-(Input.l?1:0);
+  const ox=v.x;v.x+=mv*150*dt;if(mv)v.face=mv>0?1:-1;
+  const gA=groundY(v.x+(mv>0?14:-14));
+  if(gA===null||v.y-gA>14)v.x=ox; // 断轨/高台前停住
+  v.x=clamp(v.x,cam.x+12,cam.x+VW-12);
+  if(Input.jumpP&&v.onG){v.vy=-250;Audio2.sfx('jump');}
+  v.vy+=GRAV*dt;v.y+=v.vy*dt;
+  const gy=groundY(v.x);
+  if(gy!==null&&v.y>=gy&&v.vy>=0){v.y=gy;v.vy=0;v.onG=true;}else v.onG=false;
+  player.x=v.x;player.y=v.y;player.face=v.face;
+  // 倒车射击：瞄准独立于移动
+  v.fireCd-=dt;
+  let a={dx:v.face,dy:0};
+  if(Input.usingMouse){a=Input.aim(v.x,v.y-18);v.face=a.dx>=0?1:-1;}
+  if(Input.fire&&v.fireCd<=0){v.fireCd=0.05;
+   Bullets.fire(v.x+a.dx*16,v.y-18+a.dy*8,a.dx,a.dy,'gatling',false);} // 载具不耗弹
+  if(Input.nadeP)Nades.throw_(v.x,v.y-22,v.face);
+  if(v.mountCd>0)v.mountCd-=dt;
+  else if(Input.vehP)this.dismount(false);
+  // 碾压小怪 / 被大怪磨血
+  for(const e of Ents.enemies()){
+   if(Math.abs(e.x-v.x)<(e.w+26)/2&&e.y>v.y-28){
+    if(ENEMIES[e.type].hp<=2)killEnemy(e);
+    else{hurtEnemy(e,4*dt,{isNade:true});v.hp-=3*dt;}}}
+  if(v.hp<=0)this.destroy();},
+ dismount(boom){const v=this.cur;if(!v)return;
+  v.mounted=false;player.inVeh=null;player.vy=-220;player.invT=boom?1.5:0.6;player.y=v.y-4;},
+ destroy(){const v=this.cur;if(!v)return;this.dismount(true);
+  explode(v.x,v.y-12,30,3,true);Floaters.add(v.x,v.y-30,'轮椅报废!','#ff8a7a');this.cur=null;},
+ hitByBullet(b){const v=this.cur;
+  if(v&&v.mounted&&Math.abs(b.x-v.x)<14&&b.y>v.y-30&&b.y<v.y+2){
+   v.hp-=b.stun?0:1;Audio2.sfx('hit');if(v.hp<=0)this.destroy();return true;}
+  return false;},
+ draw(){const v=this.cur;if(!v)return;
+  const X=v.x,Y=v.y,fl=v.face<0;
+  // 大轮
+  ctx.strokeStyle='#5a6678';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(Math.round(X-cam.x-4),Math.round(Y-8),7,0,7);ctx.stroke();
+  ctx.beginPath();ctx.arc(Math.round(X-cam.x-4),Math.round(Y-8),2,0,7);ctx.stroke();
+  rect(X+4,Y-5,6,5,'#3a4252'); // 小轮
+  rect(X-10,Y-22,16,4,'#3d6fd6');rect(X-10,Y-30,3,10,'#3d6fd6'); // 坐椅
+  // 加特林管
+  for(let i=0;i<3;i++)rect(X+(fl?-20:6),Y-20+i*2,14,1,'#f2c94c');
+  rect(X+(fl?-8:2),Y-21,6,5,'#5a4632');
+  if(v.mounted){const img=bakePlayer({legs:'crouch',legF:0,aim:1,gun:{len:0,col:'#8a96a8'},cape:G.rank>=4});
+   drawSpr(img,X-2,Y-6,fl);}
+  else if(Math.floor(v.t*2)%2===0)txt('E 骑乘',X-cam.x-12,Y-44,'#62d6c8',8);
+  // 耐久条
+  rect(X-12,Y-36,24,3,'#1a2233');rect(X-11,Y-35,Math.max(0,Math.round(22*v.hp/v.maxHp)),1,'#62d6c8');},
+ clear(){this.cur=null;}};
+
+/* ==================== §7h BOSS 框架与五大 BOSS ==================== */
+const T_boss={bpm:140,
+ bass:[38,0,38,38,0,38,41,0,38,0,38,38,43,0,41,0],
+ lead:[62,0,65,0,62,0,69,67,0,65,0,62,0,60,62,0],
+ noise:[2,1,1,1,2,1,1,1,2,1,1,1,2,1,2,2]};
+function hb(x,y,vx,vy,o){Bullets.hostile(x,y,vx,vy,o);} // 简写
+const Boss={cur:null,defs:{},
+ start(id){const d=this.defs[id];const ax=cam.lockX!==null?cam.lockX:cam.x;
+  const li=(typeof Level!=='undefined'&&Level.cur)?Level.idx:0,bhp=Math.ceil(d.hp*HARD.bossHp*(1+li*HARD.bossPerLevel));
+  this.cur={id,def:d,ax,x:ax+VW-80,y:230,w:d.w,h:d.h,hp:bhp,maxHp:bhp,
+    state:'enter',t:0,st:0,phase:1,face:-1,flash:0,vx:0,vy:0,inv:0,aux:{}};
+  d.init&&d.init(this.cur);
+  Audio2.sfx('bossroar');Audio2.play(T_boss);camShake(3);},
+ hurt(d){const b=this.cur;if(!b||b.inv>0||b.state==='enter'||b.state==='die')return;
+  b.hp-=d;b.flash=0.08;Audio2.sfx('hit');
+  if(b.hp<=0){b.hp=0;b.state='die';b.t=0;Audio2.stop();Audio2.sfx('bossroar');}},
+ hitTest(b){const c=this.cur;if(!c||c.state==='die'||c.state==='enter')return false;
+  if(c.def.hitTest)return c.def.hitTest(c,b);
+  if(Math.abs(b.x-c.x)<c.w/2+2&&b.y>c.y-c.h-2&&b.y<c.y+4){this.hurt(b.dmg);return true;}
+  return false;},
+ update(dt){const c=this.cur;if(!c)return;
+  c.t+=dt;c.st+=dt;if(c.flash>0)c.flash-=dt;if(c.inv>0)c.inv-=dt;
+  if(c.state==='enter'){if(c.t>1.3){c.state='idle';c.st=0;}return;}
+  if(c.state==='die'){
+   if(Math.floor(c.t*8)%2===0){Particles.bone(c.x+rnd(-c.w/2,c.w/2),c.y-rnd(0,c.h));camShake(1);}
+   if(c.t>2.4){G.addScore(5000,c.x,c.y-c.h);G.energy=Math.min(100,G.energy+40);
+    for(let i=0;i<3;i++)Floaters.add(c.x+rnd(-30,30),c.y-rnd(20,60),'锦旗!','#f2c94c');
+    Particles.spawn(c.x,c.y-c.h/2,{n:30,col:['#f2f6fa','#f2c94c','#e8dcc8'],spd:180,up:120,life:1});
+    Audio2.sfx('boom');Level.bossDone=true;this.cur=null;}
+   return;}
+  if(!c.def.noBody&&player.state==='normal'&&player.invT<=0&&!player.inVeh&&G.superT<=0&&
+   Math.abs(c.x-player.x)<(c.w+8)/2&&player.y>c.y-c.h&&player.top()<c.y)killPlayer();
+  if(G.superT>0&&Math.abs(c.x-player.x)<(c.w+14)/2&&!c.def.noBody)this.hurt(8*dt); // 外骨骼碾压
+  c.def.update(c,dt);},
+ draw(){const c=this.cur;if(!c)return;
+  if(c.flash>0)ctx.globalAlpha=0.6;
+  c.def.draw(c);ctx.globalAlpha=1;
+  if(c.state!=='enter'&&c.state!=='die'){
+   rectS(VW/2-80,8,160,7,'#1a2233');
+   rectS(VW/2-79,9,Math.max(0,Math.round(158*c.hp/c.maxHp)),5,'#d63d3d');
+   txt(c.def.nm,VW/2,17,'#f2f6fa',8,'center');}}};
+/* ---- BOSS1 椎间盘突出巨兽 ---- */
+function drawDiscBeast(c,sz){const X=c.x-cam.x,Y=c.y;
+ const r=sz/2;ctx.save();ctx.translate(Math.round(X),Math.round(Y-r));
+ if(c.state==='roll')ctx.rotate(c.st*8*(c.vx>0?1:-1));
+ // 纤维环（多层）
+ for(let i=3;i>=0;i--){ctx.fillStyle=['#e8dcc8','#bfae8e','#e8dcc8','#bfae8e'][i];
+  ctx.beginPath();ctx.arc(0,0,r-i*4,0,7);ctx.fill();}
+ // 突出髓核
+ ctx.fillStyle='#d678c8';ctx.beginPath();ctx.arc(-r*0.5,0,r*0.42,0,7);ctx.fill();
+ ctx.fillStyle='#f2a0e8';ctx.beginPath();ctx.arc(-r*0.55,-3,r*0.2,0,7);ctx.fill();
+ // 凶眼
+ ctx.fillStyle='#10131a';ctx.fillRect(-6,-r*0.45,5,5);ctx.fillRect(4,-r*0.45,5,5);
+ ctx.fillStyle='#d63d3d';ctx.fillRect(-5,-r*0.42,3,3);ctx.fillRect(5,-r*0.42,3,3);
+ ctx.restore();}
+Boss.defs.disc={nm:'职称考核：椎间盘突出巨兽',hp:75,w:54,h:48,
+ init(c){c.y=230;},
+ update(c,dt){const rage=c.hp<c.maxHp*0.5;
+  switch(c.state){
+  case 'idle':if(c.st>0.8){c.state='roll';c.st=0;c.aux.trips=0;c.vx=(player.x>c.x?1:-1)*(rage?185:140);}break;
+  case 'roll':c.x+=c.vx*dt;
+   if(c.x<c.ax+40){c.x=c.ax+40;c.vx=Math.abs(c.vx);c.aux.trips++;}
+   if(c.x>c.ax+VW-40){c.x=c.ax+VW-40;c.vx=-Math.abs(c.vx);c.aux.trips++;}
+   if(c.aux.trips>=4){c.state='spit';c.st=0;c.aux.shots=0;}
+   break;
+  case 'spit':{const n=rage?5:3;
+   if(c.st>0.5+c.aux.shots*0.4&&c.aux.shots<n){c.aux.shots++;
+    const dx=player.x-c.x,t0=0.85,vx=clamp(dx/t0,-220,220)+rnd(-30,30),vy=-(230-(c.y-30))/t0*0+(-180);
+    hb(c.x-20,c.y-30,vx,vy,{grav:GRAV,col:'#d678c8',bw:6,bh:6,gel:true});Audio2.sfx('nade');}
+   if(c.aux.shots>=n&&c.st>0.5+n*0.4+0.6){c.state='idle';c.st=0;}}
+   break;}},
+ draw(c){drawDiscBeast(c,54);}};
+/* ---- BOSS2 股骨头坏死熔岩像 ---- */
+function drawFemurStatue(c,sz){const X=Math.round(c.x-cam.x),Y=c.y,s=sz/64;
+ // 腿柱
+ rect(c.x-20*s,Y-30*s,12*s,30*s,'#bfae8e');rect(c.x+8*s,Y-30*s,12*s,30*s,'#bfae8e');
+ // 躯干（股骨干）
+ rect(c.x-16*s,Y-58*s,32*s,30*s,'#e8dcc8');
+ rect(c.x-12*s,Y-52*s,8*s,6*s,'#e8853d');rect(c.x+4*s,Y-44*s,8*s,8*s,'#d63d3d'); // 坏死熔岩斑
+ rect(c.x-4*s,Y-38*s,6*s,5*s,'#e8853d');
+ // 股骨头（球形头部）
+ ctx.fillStyle='#e8dcc8';ctx.beginPath();ctx.arc(X,Math.round(Y-66*s),14*s,0,7);ctx.fill();
+ ctx.fillStyle='#d63d3d';ctx.beginPath();ctx.arc(X-4*s,Math.round(Y-68*s),5*s,0,7);ctx.fill(); // 坏死区
+ ctx.fillStyle='#10131a';ctx.fillRect(X-8*s,Math.round(Y-70*s),4,4);ctx.fillRect(X+4*s,Math.round(Y-70*s),4,4);}
+Boss.defs.femur={nm:'职称考核：股骨头坏死熔岩像',hp:110,w:48,h:80,
+ init(c){c.y=230;},
+ update(c,dt){const rage=c.hp<c.maxHp*0.4;
+  // 缓慢逼近
+  if(c.state!=='enter')c.x+=clamp(player.x-c.x,-1,1)*12*dt;
+  c.x=clamp(c.x,c.ax+80,c.ax+VW-50);
+  switch(c.state){
+  case 'idle':if(c.st>0.9){c.state=chance(0.5)?'stomp':'scatter';c.st=0;c.aux.done=false;}break;
+  case 'stomp':
+   if(c.st>0.6&&!c.aux.done){c.aux.done=true;camShake(3);Audio2.sfx('boom');
+    const d=player.x>c.x?1:-1;
+    hb(c.x+d*30,224,d*160,0,{bw:12,bh:9,col:'#e8853d',life:3.5});
+    if(rage)hb(c.x-d*30,224,-d*160,0,{bw:12,bh:9,col:'#e8853d',life:3.5});}
+   if(c.st>1.4){c.state=rage?'rain':'idle';c.st=0;c.aux.spikes=null;}
+   break;
+  case 'scatter':
+   if(c.st>0.5&&!c.aux.done){c.aux.done=true;Audio2.sfx('fix');
+    for(let i=0;i<8;i++){const a=i/8*Math.PI*2;
+     hb(c.x,c.y-66,Math.cos(a)*130,Math.sin(a)*130,{bw:5,bh:5,col:'#e8dcc8',life:2.5});}}
+   if(c.st>1.3){c.state='idle';c.st=0;}
+   break;
+  case 'rain':
+   if(!c.aux.spikes){c.aux.spikes=[];
+    for(let i=0;i<5;i++)c.aux.spikes.push(c.ax+50+rnd(0,VW-110));}
+   if(c.st>0.8&&!c.aux.done){c.aux.done=true;Audio2.sfx('stun');
+    for(const sx of c.aux.spikes)hb(sx,10,0,300,{bw:4,bh:10,col:'#e8dcc8',life:2});}
+   if(c.st>1.6){c.state='idle';c.st=0;c.aux.spikes=null;}
+   break;}},
+ draw(c){drawFemurStatue(c,64);
+  if(c.state==='rain'&&c.aux.spikes&&c.st<=0.8){ctx.globalAlpha=0.5;
+   for(const sx of c.aux.spikes)rect(sx-4,224,8,4,'#d63d3d');ctx.globalAlpha=1;}}};
+/* ---- BOSS3 骨肉瘤聚合体 ---- */
+function drawSarcoma(c){const X=Math.round(c.x-cam.x),sz=c.aux.size,r=sz/2;
+ ctx.fillStyle='#bfae8e';ctx.beginPath();ctx.arc(X,Math.round(c.y-r),r,0,7);ctx.fill();
+ ctx.fillStyle='#d678c8';
+ for(let i=0;i<6;i++){const a=i*1.05+c.t*0.5;
+  ctx.beginPath();ctx.arc(X+Math.cos(a)*r*0.55,Math.round(c.y-r+Math.sin(a)*r*0.55),r*0.22,0,7);ctx.fill();}
+ // 嵌入的碎骨
+ ctx.fillStyle='#f2f6fa';
+ for(let i=0;i<5;i++){const a=i*1.4-c.t*0.3;
+  ctx.fillRect(X+Math.cos(a)*r*0.7-2,Math.round(c.y-r+Math.sin(a)*r*0.7)-1,5,2);}
+ ctx.fillStyle='#10131a';ctx.fillRect(X-7,Math.round(c.y-r-4),5,5);ctx.fillRect(X+3,Math.round(c.y-r-4),5,5);}
+Boss.defs.sarcoma={nm:'职称考核：骨肉瘤聚合体',hp:130,w:48,h:48,
+ init(c){c.aux.size=48;c.y=230;},
+ update(c,dt){
+  // 阶段成长
+  if(c.phase===1&&c.hp<c.maxHp*0.66){c.phase=2;c.state='grow';c.st=0;}
+  if(c.phase===2&&c.hp<c.maxHp*0.33){c.phase=3;c.state='grow';c.st=0;}
+  c.w=c.aux.size;c.h=c.aux.size;
+  switch(c.state){
+  case 'grow':c.inv=0.2;
+   c.aux.size=Math.min(c.phase===2?72:96,c.aux.size+30*dt);
+   Particles.bone(c.x+rnd(-40,40),c.y-rnd(0,40));
+   if(c.st>2){c.state='idle';c.st=0;
+    if(c.phase===2){spawnEnemy('spider',c.x-60);spawnEnemy('spider',c.x-100);Audio2.sfx('bossroar');}}
+   break;
+  case 'idle':if(c.st>0.75){c.st=0;
+    c.state=c.phase===1?'hop':(c.phase===2?'roll':'ring');c.aux.n=0;c.aux.trips=0;
+    if(c.state==='roll')c.vx=(player.x>c.x?1:-1)*170;}
+   break;
+  case 'hop':
+   if(c.aux.n===0){c.vy=-280;c.vx=clamp(player.x-c.x,-120,120);c.aux.n=1;}
+   c.vy+=GRAV*dt;c.x+=c.vx*dt;c.y+=c.vy*dt;
+   if(c.y>=230&&c.vy>0){c.y=230;camShake(2);Audio2.sfx('boom');
+    for(let i=0;i<3;i++)hb(c.x,c.y-30,(i-1)*90+rnd(-20,20),-160,{grav:GRAV,col:'#d678c8',bw:5,bh:5,gel:true});
+    c.state='idle';c.st=0;}
+   break;
+  case 'roll':c.x+=c.vx*dt;
+   if(c.x<c.ax+50){c.vx=Math.abs(c.vx);c.aux.trips++;}
+   if(c.x>c.ax+VW-50){c.vx=-Math.abs(c.vx);c.aux.trips++;}
+   if(c.aux.trips>=3){c.state='idle';c.st=0;}
+   break;
+  case 'ring':
+   c.x+=clamp(player.x-c.x,-1,1)*15*dt;
+   if(c.st>2.5){c.st=0;Audio2.sfx('fix');
+    for(let i=0;i<12;i++){const a=i/12*Math.PI*2;
+     hb(c.x,c.y-c.aux.size/2,Math.cos(a)*110,Math.sin(a)*110,{bw:5,bh:5,col:'#f2f6fa',life:3});}}
+   break;}
+  c.x=clamp(c.x,c.ax+40,c.ax+VW-40);},
+ draw(c){drawSarcoma(c);}};
+/* ---- BOSS4 医保审核蛇形机 ---- */
+Boss.defs.snake={nm:'职称考核：医保审核蛇形机',hp:140,w:0,h:0,noBody:true,
+ init(c){c.y=120;c.aux.trail=[];c.aux.segs=[];for(let i=0;i<8;i++)c.aux.segs.push({hp:8,alive:true});
+  c.aux.atkT=0;c.aux.mode='swim';c.aux.split=false;},
+ hitTest(c,b){
+  // 头
+  if(dist2(b.x,b.y,c.x,c.y)<13*13){Boss.hurt(b.dmg);return true;}
+  // 身节
+  const tr=c.aux.trail;
+  for(let i=0;i<c.aux.segs.length;i++){const s=c.aux.segs[i];if(!s.alive)continue;
+   const p=tr[tr.length-1-(i+1)*7];if(!p)continue;
+   if(dist2(b.x,b.y,p.x,p.y)<10*10){s.hp-=b.dmg;Audio2.sfx('hit');
+    if(s.hp<=0){s.alive=false;Particles.bone(p.x,p.y);G.addScore(200,p.x,p.y);Boss.cur.hp-=4;
+     if(Boss.cur.hp<=0){Boss.cur.hp=0;Boss.cur.state='die';Boss.cur.t=0;Audio2.stop();}}
+    return true;}}
+  return false;},
+ update(c,dt){const A=c.aux;
+  A.atkT+=dt;
+  if(A.mode==='swim'){
+   c.x=c.ax+VW/2+Math.cos(c.t*0.8)*160;
+   c.y=95+Math.sin(c.t*1.7)*55;
+   if(A.atkT>3.0){A.atkT=0;
+    if(chance(0.5)){A.mode='aimBite';A.bt=0;A.tx=player.x;A.ty=player.y-12;}
+    else{Audio2.sfx('stun');
+     for(let i=0;i<3;i++){const a=Math.atan2(player.y-12-c.y,player.x-c.x)+(i-1)*0.3;
+      hb(c.x,c.y,Math.cos(a)*90,Math.sin(a)*90,{bw:8,bh:6,col:'#f2f6fa',life:4,stun:true});}}}}
+  else if(A.mode==='aimBite'){A.bt+=dt;
+   if(A.bt>0.6){A.mode='bite';A.bt=0;
+    const l=Math.hypot(A.tx-c.x,A.ty-c.y)||1;
+    c.vx=(A.tx-c.x)/l*380;c.vy=(A.ty-c.y)/l*380;Audio2.sfx('bossroar');}}
+  else if(A.mode==='bite'){A.bt+=dt;
+   c.x+=c.vx*dt;c.y+=c.vy*dt;
+   if(A.bt>0.55||c.y>225||c.x<c.ax+20||c.x>c.ax+VW-20){A.mode='swim';A.atkT=0;}}
+  // 分裂
+  if(!A.split&&c.hp<c.maxHp*0.5){A.split=true;Audio2.sfx('bossroar');
+   for(let k=0;k<2;k++)spawnMiniSnake(c.ax+100+k*200,80+k*40);}
+  // 轨迹
+  A.trail.push({x:c.x,y:c.y});if(A.trail.length>80)A.trail.shift();
+  // 碰撞玩家（头+身）
+  if(player.state==='normal'&&player.invT<=0&&G.superT<=0&&!player.inVeh){
+   if(dist2(player.x,player.y-12,c.x,c.y)<16*16)killPlayer();
+   for(let i=0;i<A.segs.length;i++){if(!A.segs[i].alive)continue;
+    const p=A.trail[A.trail.length-1-(i+1)*7];if(!p)continue;
+    if(dist2(player.x,player.y-12,p.x,p.y)<13*13){killPlayer();break;}}}},
+ draw(c){const A=c.aux;
+  // 咬击预警线
+  if(A.mode==='aimBite'){ctx.globalAlpha=0.4+Math.sin(_last/40)*0.2;ctx.strokeStyle='#d63d3d';
+   ctx.beginPath();ctx.moveTo(c.x-cam.x,c.y);ctx.lineTo(A.tx-cam.x,A.ty);ctx.stroke();ctx.globalAlpha=1;}
+  // 身节（机械×骨混合）
+  for(let i=A.segs.length-1;i>=0;i--){const s=A.segs[i];if(!s.alive)continue;
+   const p=A.trail[A.trail.length-1-(i+1)*7];if(!p)continue;
+   const X=Math.round(p.x-cam.x),Y=Math.round(p.y);
+   ctx.fillStyle=i%2?'#5a6678':'#e8dcc8';ctx.beginPath();ctx.arc(X,Y,8,0,7);ctx.fill();
+   ctx.fillStyle='#3a4252';ctx.fillRect(X-2,Y-2,4,4);}
+  // 头
+  const X=Math.round(c.x-cam.x),Y=Math.round(c.y);
+  ctx.fillStyle='#8a96a8';ctx.beginPath();ctx.arc(X,Y,12,0,7);ctx.fill();
+  ctx.fillStyle='#d63d3d';ctx.fillRect(X-8,Y-6,5,4);ctx.fillRect(X+3,Y-6,5,4);
+  ctx.fillStyle='#10131a';ctx.fillRect(X-6,Y+3,12,3); // 嘴
+  txt('审',X-4,Y-18,'#f2f6fa',8);}};
+function spawnMiniSnake(x,y){Ents.add({isEnemy:true,type:'spider',ai:'mini',hp:5,spd:90,score:400,
+ w:12,h:10,x,y,t:rnd(0,3),face:-1,flash:0,slowT:0,kb:0,dead:false,phase:0,vx:0,vy:0,
+ upd(dt,e){const ts=(G.adrT>0?0.55:1)*(e.slowT>0?0.4:1);dt*=ts;e.t+=dt;if(e.flash>0)e.flash-=dt;
+  e.x+=clamp(player.x-e.x,-1,1)*e.spd*dt*0.6;
+  e.y=clamp(e.y+Math.sin(e.t*4)*40*dt+clamp(player.y-14-e.y,-1,1)*30*dt,50,210);
+  e.face=player.x>e.x?1:-1;
+  if(player.state==='normal'&&player.invT<=0&&!player.inVeh&&G.superT<=0&&
+   dist2(player.x,player.y-12,e.x,e.y)<13*13)killPlayer();
+  if(G.superT>0&&dist2(player.x,player.y-12,e.x,e.y)<16*16)killEnemy(e);},
+ drw(e){const X=Math.round(e.x-cam.x),Y=Math.round(e.y);
+  for(let i=2;i>=0;i--){ctx.fillStyle=i%2?'#5a6678':'#e8dcc8';
+   ctx.beginPath();ctx.arc(X-i*8*e.face,Y+Math.sin(e.t*4-i)*3,5,0,7);ctx.fill();}
+  ctx.fillStyle='#d63d3d';ctx.fillRect(X-3,Y-3,2,2);ctx.fillRect(X+1,Y-3,2,2);}});}
+/* ---- BOSS5 骨王·全骨骼聚合体 ---- */
+Boss.defs.boneking={nm:'终极考核：骨王·全骨骼聚合体',hp:240,w:54,h:50,
+ init(c){c.aux.size=54;c.form=1;c.y=230;c.aux.lt=0;c.aux.st2=0;},
+ update(c,dt){
+  // 形态切换
+  if(c.form===1&&c.hp<c.maxHp*0.66){c.form=2;c.state='shed';c.st=0;}
+  if(c.form===2&&c.hp<c.maxHp*0.33){c.form=3;c.state='shed';c.st=0;c.x=c.ax+VW/2;}
+  if(c.state==='shed'){c.inv=0.2;Particles.bone(c.x+rnd(-40,40),c.y-rnd(0,60));
+   for(let i=Bullets.list.length-1;i>=0;i--)if(Bullets.list[i].hostile)Bullets.list.splice(i,1);
+   if(c.st>2){c.state='idle';c.st=0;
+    c.w=c.form===3?80:54;c.h=c.form===3?90:(c.form===2?80:50);Audio2.sfx('bossroar');}
+   return;}
+  if(c.form===1){ // 椎盘形态：强化翻滚+凝胶
+   switch(c.state){
+   case 'idle':if(c.st>0.7){c.state='roll';c.st=0;c.aux.trips=0;c.vx=(player.x>c.x?1:-1)*190;}break;
+   case 'roll':c.x+=c.vx*dt;
+    if(c.x<c.ax+40){c.vx=Math.abs(c.vx);c.aux.trips++;}
+    if(c.x>c.ax+VW-40){c.vx=-Math.abs(c.vx);c.aux.trips++;}
+    if(c.aux.trips>=4){c.state='spit';c.st=0;c.aux.shots=0;}break;
+   case 'spit':
+    if(c.st>0.4+c.aux.shots*0.3&&c.aux.shots<5){c.aux.shots++;
+     hb(c.x,c.y-30,clamp((player.x-c.x)/0.8,-240,240)+rnd(-40,40),-190,{grav:GRAV,col:'#d678c8',bw:6,bh:6,gel:true});}
+    if(c.aux.shots>=5&&c.st>2.5){c.state='idle';c.st=0;}break;}}
+  else if(c.form===2){ // 巨像形态：踏波+骨刺雨+拒付单
+   c.x+=clamp(player.x-c.x,-1,1)*12*dt;c.x=clamp(c.x,c.ax+80,c.ax+VW-60);
+   switch(c.state){
+   case 'idle':if(c.st>1){c.state=['stomp','rain','paper'][irnd(0,2)];c.st=0;c.aux.done=false;c.aux.spikes=null;}break;
+   case 'stomp':
+    if(c.st>0.55&&!c.aux.done){c.aux.done=true;camShake(3);Audio2.sfx('boom');
+     hb(c.x+30,224,170,0,{bw:12,bh:9,col:'#e8853d',life:3});
+     hb(c.x-30,224,-170,0,{bw:12,bh:9,col:'#e8853d',life:3});}
+    if(c.st>1.3){c.state='idle';c.st=0;}break;
+   case 'rain':
+    if(!c.aux.spikes){c.aux.spikes=[];for(let i=0;i<6;i++)c.aux.spikes.push(c.ax+40+rnd(0,VW-90));}
+    if(c.st>0.8&&!c.aux.done){c.aux.done=true;
+     for(const sx of c.aux.spikes)hb(sx,10,0,320,{bw:4,bh:10,col:'#e8dcc8',life:2});}
+    if(c.st>1.5){c.state='idle';c.st=0;}break;
+   case 'paper':
+    if(!c.aux.done){c.aux.done=true;Audio2.sfx('stun');
+     for(let i=0;i<2;i++){const a=Math.atan2(player.y-12-(c.y-60),player.x-c.x)+(i-0.5)*0.4;
+      hb(c.x,c.y-60,Math.cos(a)*85,Math.sin(a)*85,{bw:8,bh:6,col:'#f2f6fa',life:4,stun:true});}}
+    if(c.st>1){c.state='idle';c.st=0;}break;}}
+  else{ // 骨王真身：中央巨骨，环形弹+X光激光+召唤
+   c.aux.lt+=dt;c.aux.st2+=dt;
+   if(c.st>1.7&&c.state==='idle'){c.st=0;Audio2.sfx('fix');
+    const n=14,off=rnd(0,0.5);
+    for(let i=0;i<n;i++){const a=i/n*Math.PI*2+off;
+     hb(c.x,c.y-45,Math.cos(a)*100,Math.sin(a)*100,{bw:5,bh:5,col:'#f2f6fa',life:3.5});}}
+   if(c.aux.lt>4.2){c.aux.lt=0;c.aux.beam={high:chance(0.5),t:0};Audio2.sfx('stun');}
+   if(c.aux.beam){const b=c.aux.beam;b.t+=dt;
+    if(b.t>0.8&&b.t<1.4){ // 激光生效：高位需蹲，低位需跳
+     const y0=b.high?170:206,y1=b.high?200:232;
+     if(player.state==='normal'&&player.invT<=0&&G.superT<=0&&
+      player.top()<y1&&player.y>y0)killPlayer();}
+    if(b.t>1.4)c.aux.beam=null;}
+   if(c.aux.st2>3.5){c.aux.st2=0;if(Ents.enemies().length<4)spawnEnemy('slime',c.ax+rnd(40,VW-80));}}},
+ draw(c){
+  if(c.form===1)drawDiscBeast(c,54);
+  else if(c.form===2)drawFemurStatue(c,80);
+  else{const X=Math.round(c.x-cam.x),Y=c.y;
+   // 真身：巨型骷髅上身
+   ctx.fillStyle='#e8dcc8';ctx.beginPath();ctx.arc(X,Y-70,20,0,7);ctx.fill(); // 颅骨
+   ctx.fillStyle='#10131a';ctx.fillRect(X-12,Y-76,8,8);ctx.fillRect(X+4,Y-76,8,8);
+   ctx.fillStyle='#d63d3d';ctx.fillRect(X-10,Y-74,4,4);ctx.fillRect(X+6,Y-74,4,4);
+   ctx.fillStyle='#e8dcc8';ctx.fillRect(X-6,Y-58,12,6); // 颌
+   for(let i=0;i<5;i++){rect(c.x-26+i*2,Y-50+i*8,52-i*4,4,'#e8dcc8');} // 肋骨
+   rect(c.x-4,Y-52,8,46,'#bfae8e'); // 脊柱
+   for(let i=0;i<3;i++){rect(c.x-36-i*4,Y-44+i*12,12,4,'#bfae8e');rect(c.x+24+i*4,Y-44+i*12,12,4,'#bfae8e');} // 臂骨
+   // 激光预警/光束
+   if(c.aux.beam){const b=c.aux.beam,y=b.high?172:208;
+    if(b.t<=0.8){ctx.globalAlpha=0.3+Math.sin(_last/50)*0.2;
+     rect(c.ax,y,VW,b.high?28:24,'#d63d3d');ctx.globalAlpha=1;
+     txt(b.high?'高位X光! 蹲下!':'低位X光! 跳起!',VW/2,y-12,'#ff8a7a',9,'center');}
+    else if(b.t<1.4){rect(c.ax,y,VW,b.high?28:24,'rgba(255,80,80,0.75)');
+     rect(c.ax,y+6,VW,4,'#fff');}}}}};
+
+/* ==================== §8 LEVEL 关卡引擎 ==================== */
+const THEMES={}; // id -> {sky(camx), mid(camx), ground(camx)} 程序化视差
+THEMES.clinic={ // 第1关：骨科门诊（蓝白墙、候诊椅剪影、X光灯箱、瓷砖）
+ draw(cx){rectS(0,0,VW,VH,'#15233a');
+  // 远景：墙 + 窗
+  ctx.fillStyle='#1d3050';ctx.fillRect(0,40,VW,160);
+  for(let i=-1;i<7;i++){const x=Math.round(i*150-(cx*0.3)%150);
+   ctx.fillStyle='#2a4a78';ctx.fillRect(x,55,60,46);ctx.fillStyle='#9fc4ff';ctx.globalAlpha=0.25;
+   ctx.fillRect(x+4,59,52,38);ctx.globalAlpha=1;}
+  // 中景：X光灯箱 + 候诊椅剪影 + 标语
+  for(let i=-1;i<9;i++){const x=Math.round(i*210-(cx*0.6)%210);
+   ctx.fillStyle='#0e1828';ctx.fillRect(x,120,46,60);
+   ctx.fillStyle='#bfe9ff';ctx.globalAlpha=0.3;ctx.fillRect(x+4,124,38,30);ctx.globalAlpha=1;
+   ctx.fillStyle='#f2f6fa';ctx.globalAlpha=0.5;ctx.fillRect(x+14,128,8,22);ctx.fillRect(x+10,134,16,4);ctx.globalAlpha=1;
+   ctx.fillStyle='#16263e';ctx.fillRect(x+100,166,60,14);ctx.fillRect(x+104,150,8,18);}
+  txt('骨 科 门 诊',VW/2-((cx*0.6)%800-300),84,'rgba(160,200,255,0.5)',14,'center');},
+ gcol:{fill:'#243652',top:'#3a5280',stripe:'#1a2a44'}};
+const LEVELS=[]; // 在各关任务中填充
+// 第1关：骨科门诊（教学难度，len 2400）
+LEVELS[0]={nm:'第一关 骨科门诊',rank:'实习医生',theme:'clinic',len:2400,bgm:T_main,
+ terrain:[{x0:0,x1:700,y:230},{x0:700,x1:860,y:210},{x0:860,x1:1490,y:230},{x0:1546,x1:2400,y:230}],
+ plats:[{x:1496,y:198,w:44,h:4}],checkpoints:[1100,2080],
+ events:[
+  {x:260,type:'spawn',list:[['slime',420],['slime',470]]},
+  {x:420,type:'prop',kind:'skel',px:560},
+  {x:520,type:'wave',list:[['slime',640],['slime',700],['fly',660,-20]]},
+  {x:700,type:'rescue',px:840},
+  {x:820,type:'spawn',list:[['fly',1000,-10],['fly',1050,20]]},
+  {x:920,type:'prop',kind:'cabinet',px:1060},
+  {x:1000,type:'wave',list:[['shooter',1180],['spider',1140],['slime',1200]]},
+  {x:1240,type:'item',kind:'nades',px:1330},
+  {x:1320,type:'wave',list:[['spider',1460],['spider',1565],['fly',1480,-30]]},
+  {x:1500,type:'rescue',px:1650},
+  {x:1620,type:'prop',kind:'cabinet',px:1750},
+  {x:1700,type:'wave',list:[['zombie',1860],['slime',1830],['shooter',1900]]},
+  {x:1900,type:'item',kind:'shield',px:1990},
+  {x:1980,type:'wave',list:[['zombie',2120],['spider',2090],['fly',2110,-20],['slime',2150]]},
+  {x:2180,type:'boss',id:'disc'}]};
+THEMES.surgery={ // 第2关：手术室走廊
+ draw(cx){rectS(0,0,VW,VH,'#13262a');
+  ctx.fillStyle='#1a3438';ctx.fillRect(0,36,VW,194);
+  // 无影灯吊顶
+  for(let i=-1;i<8;i++){const x=Math.round(i*170-(cx*0.35)%170);
+   ctx.fillStyle='#2a4a50';ctx.fillRect(x+20,36,4,18);
+   ctx.fillStyle='#3a6a70';ctx.beginPath();ctx.arc(x+22,60,12,0,7);ctx.fill();
+   ctx.fillStyle='#d8fff4';ctx.globalAlpha=0.5;ctx.beginPath();ctx.arc(x+22,62,8,0,7);ctx.fill();ctx.globalAlpha=1;}
+  // 手术门 + 监护仪
+  for(let i=-1;i<9;i++){const x=Math.round(i*230-(cx*0.65)%230);
+   ctx.fillStyle='#1e4a44';ctx.fillRect(x,128,52,102);
+   ctx.fillStyle='#62d6c8';ctx.globalAlpha=0.35;ctx.fillRect(x+6,140,18,16);ctx.fillRect(x+28,140,18,16);ctx.globalAlpha=1;
+   ctx.fillStyle='#f2f6fa';ctx.fillRect(x+20,170,12,3);
+   ctx.fillStyle='#0e2422';ctx.fillRect(x+120,150,38,28);
+   ctx.strokeStyle='#9ef27a';ctx.beginPath();
+   for(let k=0;k<19;k++){const yy=164+Math.sin((cx*0.65+x+k*2)/6)*((k%9)<2?8:2);
+    k?ctx.lineTo(x+122+k*2,yy):ctx.moveTo(x+122,yy);}ctx.stroke();}
+  txt('手 术 中',VW/2-((cx*0.65)%700-280),96,'rgba(120,240,200,0.4)',12,'center');},
+ gcol:{fill:'#1c3236',top:'#3a6a70',stripe:'#142628'}};
+THEMES.mine={ // 第3关：钙化矿场
+ draw(cx){rectS(0,0,VW,VH,'#241f1a');
+  // 远景钙化晶簇
+  for(let i=-1;i<8;i++){const x=Math.round(i*160-(cx*0.3)%160);
+   ctx.fillStyle='#3a332a';ctx.beginPath();ctx.moveTo(x,200);ctx.lineTo(x+40,70+(i%3)*20);ctx.lineTo(x+80,200);ctx.fill();}
+  // 中景骨堆 + 晶体
+  for(let i=-1;i<9;i++){const x=Math.round(i*200-(cx*0.6)%200);
+   ctx.fillStyle='#4a4238';ctx.beginPath();ctx.moveTo(x,230);ctx.lineTo(x+30,150);ctx.lineTo(x+60,230);ctx.fill();
+   ctx.fillStyle='#e8dcc8';ctx.globalAlpha=0.6;
+   ctx.fillRect(x+90,196,24,6);ctx.fillRect(x+98,184,6,18);
+   ctx.fillRect(x+130,206,16,4);ctx.globalAlpha=1;
+   ctx.fillStyle='#62d6c8';ctx.globalAlpha=0.4;ctx.fillRect(x+44,170,6,14);ctx.globalAlpha=1;}
+ },
+ gcol:{fill:'#3a332a',top:'#8a96a8',stripe:'#5a4632'}};
+THEMES.abyss={ // 第4关：椎间盘深渊
+ draw(cx){const g=ctx.createLinearGradient(0,0,0,VH);
+  g.addColorStop(0,'#0a1430');g.addColorStop(1,'#10131a');ctx.fillStyle=g;ctx.fillRect(0,0,VW,VH);
+  // 神经根荧光线
+  ctx.strokeStyle='rgba(98,214,200,0.25)';
+  for(let i=0;i<5;i++){ctx.beginPath();
+   for(let k=0;k<=24;k++){const x=k*20,y=40+i*45+Math.sin((cx*0.4+x)/40+i)*12;
+    k?ctx.lineTo(x,y):ctx.moveTo(x,y);}ctx.stroke();}
+  // 远景悬浮椎间盘
+  for(let i=-1;i<8;i++){const x=Math.round(i*150-(cx*0.5)%150);
+   ctx.fillStyle='#1d2a4a';ctx.beginPath();ctx.ellipse(x+50,80+(i%3)*40,26,9,0,0,7);ctx.fill();
+   ctx.fillStyle='#2a3a60';ctx.beginPath();ctx.ellipse(x+50,77+(i%3)*40,26,7,0,0,7);ctx.fill();}
+ },
+ gcol:{fill:'#1d2a4a',top:'#3a4e80',stripe:'#16203a'}};
+THEMES.rooftop={ // 第5关：医院天台（夜->黎明）
+ draw(cx){const g=ctx.createLinearGradient(0,0,0,VH);
+  g.addColorStop(0,'#0c1026');g.addColorStop(0.6,'#2a2050');g.addColorStop(1,'#6e3a6e');
+  ctx.fillStyle=g;ctx.fillRect(0,0,VW,VH);
+  // 星
+  ctx.fillStyle='#f2f6fa';for(let i=0;i<40;i++){const x=(i*97)%VW,y=(i*53)%120;
+   if((i+Math.floor(_last/700))%7)ctx.fillRect(x,y,1,1);}
+  ctx.fillStyle='#ffe9b0';ctx.globalAlpha=0.7;ctx.beginPath();ctx.arc(380,40,12,0,7);ctx.fill();ctx.globalAlpha=1;
+  // 城市剪影
+  ctx.fillStyle='#0e1118';
+  for(let i=-1;i<14;i++){const x=Math.round(i*90-(cx*0.25)%90);
+   ctx.fillRect(x,150+(i%4)*14,46,120);
+   ctx.fillStyle='#f2c94c';ctx.globalAlpha=0.4;
+   for(let k=0;k<6;k++)if((i+k)%3)ctx.fillRect(x+6+(k%3)*14,160+(i%4)*14+Math.floor(k/3)*16,5,6);
+   ctx.globalAlpha=1;ctx.fillStyle='#0e1118';}
+ },
+ gcol:{fill:'#1c2230',top:'#2e3850',stripe:'#f2c94c'}};
+// 每关 BGM 变奏
+const T_l2={bpm:118,
+ bass:[41,0,41,0,48,0,41,0,39,0,39,0,46,0,39,0],
+ lead:[65,0,68,70,0,68,65,0,63,65,0,60,0,63,65,0],
+ noise:[2,0,1,0,2,0,1,1,2,0,1,0,2,0,1,1]};
+const T_l3={bpm:124,
+ bass:[40,40,0,40,43,0,40,0,38,38,0,38,45,0,43,0],
+ lead:[64,0,67,0,69,67,64,0,62,0,64,67,0,64,62,0],
+ noise:[2,1,0,1,2,1,0,1,2,1,0,1,2,1,1,1]};
+const T_l4={bpm:104,
+ bass:[36,0,0,36,0,0,43,0,36,0,0,36,41,0,40,0],
+ lead:[60,0,63,0,67,0,63,0,58,0,62,0,65,0,62,0],
+ noise:[1,0,0,1,1,0,0,1,1,0,0,1,1,0,1,0]};
+const T_l5={bpm:132,
+ bass:[45,0,45,45,50,0,45,0,47,0,47,47,52,0,50,0],
+ lead:[69,72,74,0,76,74,72,69,71,74,76,0,79,76,74,71],
+ noise:[2,1,1,1,2,1,1,1,2,1,1,1,2,2,1,2]};
+// 第2关：手术室走廊（盾兵教学、丧尸群、飞虫伏击）
+LEVELS[1]={nm:'第二关 手术室走廊',rank:'住院医师',theme:'surgery',len:2600,bgm:T_l2,
+ terrain:[{x0:0,x1:600,y:230},{x0:600,x1:760,y:206},{x0:760,x1:1300,y:230},
+  {x0:1380,x1:1900,y:230},{x0:1900,x1:2040,y:206},{x0:2040,x1:2600,y:230}],
+ plats:[{x:1316,y:194,w:48,h:4}],checkpoints:[1240,2200],
+ events:[
+  {x:240,type:'spawn',list:[['slime',400],['fly',440,-20]]},
+  {x:400,type:'prop',kind:'cabinet',px:520},
+  {x:480,type:'wave',list:[['zombie',620],['slime',590],['slime',660]]},
+  {x:640,type:'rescue',px:780},
+  {x:760,type:'wave',list:[['shield',900],['shooter',940]]},
+  {x:940,type:'item',kind:'nades',px:1030},
+  {x:1010,type:'spawn',list:[['fly',1180,-30],['fly',1220,-10],['fly',1260,-50]]},
+  {x:1180,type:'prop',kind:'skel',px:1260},
+  {x:1270,type:'wave',list:[['zombie',1410],['zombie',1460],['spider',1380]]},
+  {x:1450,type:'rescue',px:1580},
+  {x:1560,type:'item',kind:'life',px:1640},
+  {x:1620,type:'wave',list:[['shield',1760],['shooter',1810],['fly',1780,-20]]},
+  {x:1800,type:'rescue',px:1930},
+  {x:1900,type:'item',kind:'ammo',px:1990},
+  {x:1980,type:'wave',list:[['zombie',2120],['zombie',2160],['shield',2200],['fly',2140,-30]]},
+  {x:2330,type:'boss',id:'femur'}]};
+// 第3关：钙化矿场（轮椅加特林 + 怪潮 + 断轨弃车）
+LEVELS[2]={nm:'第三关 钙化矿场',rank:'主治医师',theme:'mine',len:2800,bgm:T_l3,
+ terrain:[{x0:0,x1:300,y:230},{x0:300,x1:440,y:202},{x0:440,x1:2060,y:230},{x0:2130,x1:2800,y:230}],
+ plats:[],checkpoints:[1300,2300],
+ events:[
+  {x:240,type:'spawn',list:[['spider',400],['spider',450]]},
+  {x:420,type:'item',kind:'weapon',wname:'cement',px:520},
+  {x:500,type:'wave',list:[['zombie',640],['shooter',690],['slime',610]]},
+  {x:660,type:'rescue',px:800},
+  {x:780,type:'veh',px:880},
+  {x:900,type:'spawn',list:[['slime',1040],['slime',1080],['spider',1120],['slime',1160]]},
+  {x:1100,type:'wave',list:[['slime',1240],['slime',1280],['spider',1320],['slime',1360],['fly',1300,-20],['fly',1340,-40]]},
+  {x:1340,type:'prop',kind:'cabinet',px:1460},
+  {x:1430,type:'wave',list:[['zombie',1570],['zombie',1620],['slime',1540],['spider',1600],['fly',1580,-30]]},
+  {x:1620,type:'rescue',px:1750},
+  {x:1730,type:'item',kind:'adr',px:1820},
+  {x:1800,type:'wave',list:[['shield',1940],['zombie',1990],['shooter',2030],['fly',1960,-20]]},
+  {x:2150,type:'item',kind:'shield',px:2230},
+  {x:2230,type:'rescue',px:2350},
+  {x:2540,type:'boss',id:'sarcoma'}]};
+// 第4关：椎间盘深渊（平台跳跃 + 远程压制）
+LEVELS[3]={nm:'第四关 椎间盘深渊',rank:'副主任医师',theme:'abyss',len:2600,bgm:T_l4,
+ terrain:[{x0:0,x1:560,y:230},{x0:636,x1:900,y:230},{x0:900,x1:1060,y:206},
+  {x0:1188,x1:1400,y:230},{x0:1400,x1:1520,y:198},{x0:1520,x1:1660,y:230},{x0:1736,x1:2600,y:230}],
+ plats:[{x:574,y:192,w:48,h:4},{x:1090,y:196,w:40,h:4},{x:1148,y:172,w:40,h:4},{x:1674,y:192,w:48,h:4}],
+ checkpoints:[1260,2160],
+ events:[
+  {x:220,type:'spawn',list:[['fly',380,-20],['fly',420,-40]]},
+  {x:380,type:'wave',list:[['shooter',520],['spider',490]]},
+  {x:560,type:'spawn',list:[['fly',700,-30]]},
+  {x:700,type:'rescue',px:830},
+  {x:800,type:'item',kind:'nades',px:890},
+  {x:870,type:'wave',list:[['shield',1000],['shooter',1040],['fly',1010,-20]]},
+  {x:1010,type:'spawn',list:[['fly',1150,-60],['fly',1210,-40]]},
+  {x:1240,type:'item',kind:'life',px:1168,py:160},
+  {x:1300,type:'wave',list:[['zombie',1440],['shooter',1490],['spider',1410]]},
+  {x:1470,type:'rescue',px:1590},
+  {x:1700,type:'wave',list:[['shield',1840],['shield',1890],['fly',1860,-30]]},
+  {x:1880,type:'item',kind:'ammo',px:1970},
+  {x:1950,type:'wave',list:[['zombie',2090],['shooter',2140],['spider',2060],['fly',2110,-20]]},
+  {x:2340,type:'boss',id:'snake'}]};
+// 第5关：医院天台·终极考核（全敌种 + 大招）
+LEVELS[4]={nm:'第五关 长征医院天台·终极考核',rank:'主任医师',theme:'rooftop',len:2400,bgm:T_l5,
+ terrain:[{x0:0,x1:400,y:230},{x0:400,x1:520,y:208},{x0:520,x1:900,y:230},{x0:900,x1:1000,y:192},
+  {x0:1000,x1:1400,y:230},{x0:1400,x1:1505,y:208},{x0:1565,x1:2400,y:230}],
+ plats:[{x:946,y:156,w:42,h:4}],checkpoints:[1100,2000],
+ events:[
+  {x:200,type:'spawn',list:[['slime',360],['spider',400],['fly',380,-20]]},
+  {x:360,type:'wave',list:[['zombie',500],['shooter',550],['slime',470]]},
+  {x:520,type:'rescue',px:660},
+  {x:640,type:'item',kind:'nades',px:730},
+  {x:710,type:'wave',list:[['shield',850],['shield',900],['fly',870,-30],['shooter',930]]},
+  {x:910,type:'prop',kind:'cabinet',px:1020},
+  {x:1000,type:'wave',list:[['zombie',1140],['zombie',1190],['spider',1110],['fly',1160,-20],['fly',1200,-40]]},
+  {x:1180,type:'rescue',px:1310},
+  {x:1290,type:'item',kind:'adr',px:1380},
+  {x:1360,type:'wave',list:[['shield',1500],['zombie',1590],['shooter',1620],['spider',1470],['fly',1530,-30]]},
+  {x:1580,type:'item',kind:'shield',px:1670},
+  {x:1650,type:'wave',list:[['zombie',1790],['shield',1840],['shooter',1890],['fly',1810,-20],['fly',1860,-40],['spider',1760]]},
+  {x:1870,type:'item',kind:'ammo',px:1960},
+  {x:2110,type:'boss',id:'boneking'}]};
+function spawnPressure(ev){
+ const li=Level.idx,extra=li>=4?2:(li>=2?1:(chance(0.45)?1:0));
+ if(extra<=0)return;
+ const pools=[['slime'],['slime','spider'],['slime','spider','fly'],['spider','fly','shooter'],['shield','fly','spider','shooter']];
+ const pool=pools[Math.min(li,pools.length-1)];
+ for(let i=0;i<extra;i++){
+  const type=pool[irnd(0,pool.length-1)],x=clamp(ev.x+230+i*58+rnd(-18,28),cam.x+220,Level.cur.len-80);
+  spawnEnemy(type,x,type==='fly'?rnd(-50,10):0);
+ }
+}
+const Level={cur:null,idx:0,checkpointX:60,evQueue:[],wave:null,bossOn:false,bossDone:false,done:false,t:0,
+ load(i){this.idx=i;this.cur=LEVELS[i];this.checkpointX=60;this.evQueue=this.cur.events.slice();
+  this.wave=null;this.bossOn=false;this.bossDone=false;this.done=false;this.t=0;
+  Ents.clear();Bullets.clear();Nades.clear();Particles.clear();Floaters.clear();Hazards.clear();Veh.clear();
+  cam.x=0;cam.lockX=null;Boss.cur=null;
+  solids=this.cur.plats.slice();
+  // 地形分段：[{x0,x1,y}]，段间空隙=深渊；无定义则全程平地230
+  const ter=this.cur.terrain||[{x0:-1e9,x1:1e9,y:230}];
+  this.ter=ter.slice().sort((a,b)=>a.x0-b.x0);
+  groundY=x=>{for(const t of this.ter)if(x>=t.x0&&x<t.x1)return t.y;return null;};
+  player.reset(60,230);
+  Audio2.play(this.cur.bgm);},
+ update(dt){this.t+=dt;
+  // 事件触发
+  for(let i=this.evQueue.length-1;i>=0;i--){const ev=this.evQueue[i];
+   if(cam.x+VW*0.7>ev.x){this.evQueue.splice(i,1);this.fire(ev);}}
+  // 波次锁镜头
+  if(this.wave){if(Ents.enemies().length===0){this.wave=null;cam.lockX=null;}}
+  // 存档点
+  for(const cp of this.cur.checkpoints){if(player.x>cp&&this.checkpointX<cp){this.checkpointX=cp;
+   Floaters.add(player.x,player.y-44,'存档点!','#9ef27a');Audio2.sfx('pickup');}}
+  // BOSS
+  if(this.bossOn){Boss.update(dt);
+   if(this.bossDone&&!this.done){this.done=true;levelClear();}}
+  // 镜头极限
+  cam.x=clamp(cam.x,0,this.cur.len-VW);},
+ fire(ev){switch(ev.type){
+  case 'spawn':for(const s of ev.list)spawnEnemy(s[0],s[1],s[2]);break;
+  case 'wave':for(const s of ev.list)spawnEnemy(s[0],s[1],s[2]);spawnPressure(ev);
+   this.wave=ev;cam.lockX=Math.min(ev.x,this.cur.len-VW);break;
+  case 'rescue':spawnRescue(ev.px);break;
+  case 'prop':spawnProp(ev.kind,ev.px);break;
+  case 'item':spawnItem(ev.kind,ev.px,ev.py,ev.wname,ev.py!==undefined);break;
+  case 'veh':Veh.spawn(ev.px);break;
+  case 'boss':this.bossOn=true;cam.lockX=Math.min(ev.x,this.cur.len-VW);Boss.start(ev.id);break;}},
+ drawBg(){THEMES[this.cur.theme].draw(cam.x);drawTerrain();},
+};
+// 统一地形渲染：分段地面（含高低差侧壁）、深渊缺口警示条、单向平台
+function drawTerrain(){
+ const gc=THEMES[Level.cur.theme].gcol,ter=Level.ter;
+ for(const t of ter){
+  const x0=Math.max(t.x0,cam.x-8),x1=Math.min(t.x1,cam.x+VW+8);
+  if(x1<=x0)continue;
+  rect(x0,t.y,x1-x0,VH-t.y,gc.fill);   // 地体
+  rect(x0,t.y,x1-x0,3,gc.top);          // 顶面
+  for(let sx=Math.floor(x0/24)*24;sx<x1-12;sx+=24)
+   if(sx>=x0)rect(sx,t.y+6,12,3,gc.stripe); // 纹饰
+ }
+ // 深渊缺口边缘警示（黄黑条）
+ for(let i=0;i<ter.length;i++){const c0=ter[i],n=ter[i+1];
+  if(n&&n.x0>c0.x1){
+   if(c0.x1>cam.x-10&&c0.x1<cam.x+VW+10)
+    for(let k=0;k<4;k++)rect(c0.x1-4,c0.y+k*7,4,4,k%2?'#f2c94c':'#10131a');
+   if(n.x0>cam.x-10&&n.x0<cam.x+VW+10)
+    for(let k=0;k<4;k++)rect(n.x0,n.y+k*7,4,4,k%2?'#f2c94c':'#10131a');}}
+ // 单向悬浮平台
+ for(const p of solids){rect(p.x,p.y,p.w,3,gc.top);rect(p.x,p.y+3,p.w,4,gc.fill);
+  rect(p.x,p.y+7,p.w,1,gc.stripe);}}
+
+/* ==================== §9 场景与 HUD ==================== */
+const UNLOCKS=[['drill'],['plate','cement'],['fixator'],['gatling']]; // 通关第i关解锁
+function drawHUD(){
+ // 命数（老铁头像）
+ const head=bakePlayer({legs:'idle',legF:0,aim:1,gun:{len:0,col:'#8a96a8'}});
+ for(let i=0;i<Math.min(8,G.lives);i++){
+  ctx.drawImage(head,10,0,14,12,4+i*12,3,14,12);}
+ if(G.shield>0)txt('[盾]',4+Math.min(8,G.lives)*12+2,4,'#c8d4e0',8);
+ // 武器与弹药
+ const w=WEAPONS[G.weapon];
+ txt(w.nm+' '+(G.ammo===Infinity?'∞':G.ammo),4,17,'#f2f6fa',8);
+ txt('雷×'+G.nades,4,28,'#e8dcc8',8);
+ // 分数
+ txt(String(G.score).padStart(7,'0'),VW-4,3,'#f2c94c',10,'right');
+ // 职称徽章
+ rectS(3,VH-14,52,11,'rgba(0,0,0,0.45)');
+ rectS(4,VH-13,3,9,RANK_COL[G.rank]);
+ txt(RANKS[G.rank],9,VH-13,RANK_COL[G.rank],8);
+ // 大招能量槽（主任期）
+ if(G.rank>=4){rectS(60,VH-12,62,7,'#1a2233');
+  rectS(61,VH-11,Math.round(G.energy*0.6),5,G.energy>=100?'#f2c94c':'#62d6c8');
+  txt(G.energy>=100?'大招就绪(Q)!':'能量',125,VH-13,'#c8d4e0',8);}
+ if(G.adrT>0)txt('肾上腺素 '+G.adrT.toFixed(0)+'s',VW-4,16,'#ff8a7a',8,'right');
+ if(G.superT>0)txt('外骨骼 '+G.superT.toFixed(1)+'s',VW-4,27,'#62d6c8',9,'right');
+ // 眩晕提示：拒付单贴边飘
+ if(G.stunT>0){ctx.globalAlpha=0.8;
+  for(let i=0;i<3;i++){const t=_last/300+i*2;
+   rectS(VW/2-90+i*80+Math.sin(t)*10,30+Math.cos(t*1.3)*8,22,14,'#f2f6fa');
+   txt('拒付',VW/2-88+i*80+Math.sin(t)*10,32+Math.cos(t*1.3)*8,'#d63d3d',8);}
+  ctx.globalAlpha=1;txt('医保拒付！操作紊乱!',VW/2,50,'#ff8a7a',9,'center');}
+ if(DEBUG)txt('[调试] 1-5跳关 G无敌 7换武器 F满能量',VW/2,VH-12,'#9ef27a',7,'center');}
+const WKEYS=Object.keys(WEAPONS);let _wIdx=0;
+const ScnPlay={
+ enter(){},
+ update(dt){
+  if(Input.pauseP){Scenes.push(ScnPause);return;}
+  if(DEBUG){
+   if(Input.pressed.KeyG)god=!god;
+   if(Input.pressed.Digit7){_wIdx=(_wIdx+1)%WKEYS.length;G.setWeapon(WKEYS[_wIdx]);}
+   if(Input.pressed.KeyF)G.energy=100;
+   if(Input.pressed.KeyT)killPlayer();
+   for(let i=1;i<=5;i++)if(Input.pressed['Digit'+i]){startLevel(i-1);return;}}
+  // 全局计时
+  if(G.adrT>0)G.adrT-=dt;
+  if(G.stunT>0)G.stunT-=dt;
+  if(G.superT>0){G.superT-=dt;if(G.superT<=0){G.energy=0;player.invT=2;}}
+  // 大招发动
+  if(G.rank>=4&&G.energy>=100&&G.superT<=0&&Input.superP&&player.state==='normal'){
+   G.superT=8;Audio2.sfx('super');camShake(3);
+   Floaters.add(player.x,player.top()-16,'手术机器人外骨骼!','#62d6c8');}
+  Level.update(dt);
+  Veh.update(dt);
+  player.update(dt);
+  if(player.state==='normal')camFollow(player.inVeh?Veh.cur.x:player.x);
+  Ents.update(dt);Bullets.update(dt);Nades.update(dt);Hazards.update(dt);
+  Particles.update(dt);Floaters.update(dt);},
+ draw(){Level.drawBg();
+  // 存档点旗
+  for(const cp of Level.cur.checkpoints){const gy=groundY(cp)||230;
+   drawSpr(ESPR.flag[0],cp,gy-2,false);
+   rect(cp-1,gy-18,2,16,Level.checkpointX>=cp?'#9ef27a':'#5a4632');}
+  Ents.draw();Hazards.draw();Veh.draw();
+  if(Level.bossOn)Boss.draw();
+  player.draw();Bullets.draw();Nades.draw();
+  Particles.draw();Floaters.draw();
+  drawHUD();}};
+function startLevel(i){G.lvl=i;G.rank=Math.max(G.rank,i);Level.load(i);Scenes.replace(ScnPlay);}
+function levelClear(){
+ Audio2.sfx('promote');
+ if(Level.idx>=4)Scenes.replace(ScnVictory);
+ else Scenes.replace(ScnPromote);}
+function gameOver(){Scenes.replace(ScnGameOver);}
+/* ---- 标题 ---- */
+const ScnTitle={t:0,
+ enter(){this.t=0;G.reset();Audio2.play(T_main);},
+ update(dt){this.t+=dt;
+  if(this.t>0.6&&(Input.anyP)){Scenes.replace(ScnIntro);}},
+ draw(){cam.x=0;rectS(0,0,VW,VH,'#10131a');
+  // 背景骨骼装饰
+  for(let i=0;i<8;i++){const x=30+i*60,y=200+Math.sin(this.t+i)*4;
+   ctx.globalAlpha=0.15;ctx.drawImage(ESPR.skelProp[0],x,y);ctx.globalAlpha=1;}
+  txt('暴 走 老 铁',VW/2,52,'#f2f6fa',34,'center');
+  txt('RAMPAGE LTL',VW/2,92,'#3d6fd6',12,'center');
+  txt('—— 骨科风云·职称晋升之路 ——',VW/2,110,'#8a96a8',9,'center');
+  // 老铁立绘（放大）
+  const img=bakePlayer({legs:'idle',legF:0,aim:1,gun:WEAPONS.nail.gun});
+  ctx.imageSmoothingEnabled=false;
+  ctx.drawImage(img,VW/2-60,128,80,76);
+  if(Math.floor(this.t*1.5)%4===0)txt('嘿嘿。',VW/2+30,140,'#c8d4e0',9);
+  if(IS_TOUCH){
+   txt('【手机】左滑杆移动/抬枪/蹲  右侧：射击 跳 雷 大招 载具 暂停',VW/2,212,'#c8d4e0',8,'center');
+   txt('建议横屏；iOS Safari 可直接打开，第一次点屏幕会解锁声音',VW/2,224,'#c8d4e0',8,'center');
+  }else{
+   txt('【键鼠】AD移动 W/空格跳 S蹲 鼠标瞄准 左键射击 右键手雷 Q大招 E载具',VW/2,212,'#c8d4e0',8,'center');
+   txt('【键盘】←→移动 ↑抬枪↓蹲 J射击 K跳 L手雷 I大招 | P暂停 M静音',VW/2,224,'#c8d4e0',8,'center');}
+  if(Math.floor(this.t*2)%2===0)txt('- 点击或按任意键 开始上班 -',VW/2,244,'#f2c94c',10,'center');}};
+/* ---- 开场剧情介绍 ---- */
+const INTRO_LINES=[
+ '深夜 11 点，长征医院·骨科大楼。',
+ '废弃标本室突发异变——骨骼标本、石膏模型、',
+ '医疗废料统统活了过来，患者被困候诊区！',
+ '',
+ '值班的实习医生【铁教授】推了推眼镜，',
+ '抄起手边的骨锤和骨钉枪，微微一笑：',
+ '',
+ '「今晚的病例……有点多啊。」',
+ '',
+ '杀出重围，解救病人，通过职称考核——',
+ '从实习医生一路晋升主任医师！'];
+const ScnIntro={t:0,
+ enter(){this.t=0;Audio2.stop();},
+ update(dt){this.t+=dt;
+  const total=INTRO_LINES.join('').length/14+1.5; // 全部打完所需时间
+  if(Input.anyP){if(this.t<total)this.t=total; // 第一次按键：跳过打字
+   else startLevel(0);}                          // 第二次按键：开始
+  if(this.t>total+5)startLevel(0);},             // 看完5秒自动开始
+ draw(){cam.x=0;rectS(0,0,VW,VH,'#0a0d12');
+  // 心电图装饰线
+  ctx.strokeStyle='rgba(158,242,122,0.25)';ctx.beginPath();
+  for(let k=0;k<=120;k++){const x=k*4,y=24+Math.sin((x+_last/10)/8)*((x+_last/10)%160<12?10:2);
+   k?ctx.lineTo(x,y):ctx.moveTo(x,y);}ctx.stroke();
+  let chars=Math.floor(this.t*14),y=52;
+  for(const line of INTRO_LINES){
+   if(chars<=0)break;
+   txt(line.slice(0,chars),VW/2,y,line.includes('「')?'#f2c94c':'#c8d4e0',10,'center');
+   chars-=line.length||1;y+=16;}
+  const total=INTRO_LINES.join('').length/14+1.5;
+  if(this.t>total&&Math.floor(this.t*2)%2===0)
+   txt('- 按任意键 开始急诊 -',VW/2,242,'#f2c94c',10,'center');
+  else if(this.t<total)txt('按任意键 跳过',VW-8,VH-14,'#5a6678',8,'right');}};
+/* ---- 晋升 ---- */
+const ScnPromote={t:0,
+ enter(){this.t=0;Audio2.stop();Audio2.sfx('promote');
+  G.rank=Level.idx+1;G.lives=Math.min(6,G.lives+1);
+  const unlocked=UNLOCKS[Level.idx]||[];
+  this.unlocked=unlocked;
+  if(unlocked.length)G.setWeapon(unlocked[0]);},
+ update(dt){this.t+=dt;
+  if(this.t>1.2&&Input.anyP)startLevel(Level.idx+1);},
+ draw(){cam.x=0;rectS(0,0,VW,VH,'#10131a');
+  const w=Math.min(1,this.t/0.5);
+  // 证书展开
+  rectS(VW/2-150*w,40,300*w,160,'#e8dcc8');
+  if(w>=1){rectS(VW/2-144,46,288,148,'#f6efe0');
+   txt('职 称 考 核 通 过',VW/2,58,'#5a4632',14,'center');
+   txt('兹证明 老铁 同志通过考核，晋升为',VW/2,86,'#5a4632',9,'center');
+   txt(RANKS[G.rank],VW/2,102,'#d63d3d',18,'center');
+   for(let i=0;i<this.unlocked.length;i++)
+    txt('解锁武器：'+WEAPONS[this.unlocked[i]].nm,VW/2,130+i*13,'#3d6fd6',9,'center');
+   txt('生命 +1（当前 '+G.lives+'）',VW/2,132+this.unlocked.length*13,'#9ef27a',9,'center');
+   if(this.t>1){ctx.save();ctx.translate(VW/2+92,160);ctx.rotate(-0.3);
+    ctx.strokeStyle='#d63d3d';ctx.lineWidth=2;ctx.strokeRect(-24,-12,48,24);
+    txt('考核通过',-20,-6,'#d63d3d',9);ctx.restore();}
+   if(this.t>1.2&&Math.floor(this.t*2)%2===0)txt('- 按任意键 继续查房 -',VW/2,230,'#f2c94c',10,'center');}}};
+/* ---- 游戏结束 ---- */
+const ScnGameOver={t:0,
+ enter(){this.t=0;Audio2.stop();Audio2.sfx('die');},
+ update(dt){this.t+=dt;
+ if(this.t>1&&Input.anyP){G.lives=HARD.initialLives;G.nades=HARD.initialNades;G.stunT=0;G.adrT=0;G.superT=0;startLevel(Level.idx);}},
+ draw(){rectS(0,0,VW,VH,'#0a0d12');
+  txt('医 疗 事 故',VW/2,80,'#d63d3d',26,'center');
+  txt('老铁倒在了变异骨骼怪潮中……',VW/2,120,'#8a96a8',10,'center');
+  txt('得分 '+G.score+'   救援 '+G.rescued+' 人',VW/2,140,'#c8d4e0',9,'center');
+  if(this.t>1&&Math.floor(this.t*2)%2===0)txt('- 按任意键 重返本关（命数恢复5）-',VW/2,180,'#f2c94c',10,'center');}};
+/* ---- 通关 ---- */
+const ScnVictory={t:0,
+ enter(){this.t=0;G.rank=4;Audio2.play(T_main);Audio2.sfx('promote');},
+ update(dt){this.t+=dt;
+  if(this.t>2&&Input.anyP)Scenes.replace(ScnTitle);},
+ draw(){cam.x=0;
+  // 天台日出
+  const g=ctx.createLinearGradient(0,0,0,VH);
+  g.addColorStop(0,'#1a2233');g.addColorStop(0.55,'#d63d6e');g.addColorStop(1,'#f2c94c');
+  ctx.fillStyle=g;ctx.fillRect(0,0,VW,VH);
+  ctx.fillStyle='#ffe9b0';ctx.beginPath();ctx.arc(VW/2,200,28,0,7);ctx.fill();
+  ctx.fillStyle='#10131a';for(let i=0;i<10;i++)ctx.fillRect(i*52,210+(i%3)*8,34,60);
+  ctx.fillStyle='#0e1118';ctx.fillRect(0,240,VW,30);
+  const img=bakePlayer({legs:'idle',legF:Math.floor(this.t*2)%2,aim:1,cape:true,gun:WEAPONS.gatling.gun});
+  ctx.drawImage(img,VW/2-60,126,120,114);
+  txt('考 核 全 部 通 过',VW/2,30,'#f2f6fa',20,'center');
+  txt('主任医师 · 老铁 名扬骨科',VW/2,58,'#f2c94c',12,'center');
+  txt('总分 '+G.score+'    锦旗 '+G.rescued+' 面',VW/2,80,'#f2f6fa',10,'center');
+  txt('「白大褂披风暴走形态 已解锁」',VW/2,98,'#c8d4e0',9,'center');
+  if(this.t>2&&Math.floor(this.t*2)%2===0)txt('- 按任意键 返回标题 -',VW/2,250,'#10131a',9,'center');}};
+/* ---- 暂停 ---- */
+const ScnPause={
+ update(dt){if(Input.pauseP||Input.pressed.Space)Scenes.pop();},
+ draw(){Scenes.stack[Scenes.stack.length-2]&&Scenes.stack[Scenes.stack.length-2].draw();
+  rectS(0,0,VW,VH,'rgba(0,0,0,0.55)');
+  txt('暂 停',VW/2,110,'#f2f6fa',20,'center');
+  txt('P/Esc 继续  M 静音',VW/2,145,'#c8d4e0',9,'center');}};
+addEventListener('blur',()=>{const s=Scenes.top();
+ if(s===ScnPlay)Scenes.push(ScnPause);});
+
+/* ==================== §10 BOOT ==================== */
+Scenes.push(ScnTitle);
+requestAnimationFrame(frame);
+/*EOF*/</script>
+</body>
+</html>
