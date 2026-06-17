@@ -76,7 +76,10 @@ let god=false;
 /* ==================== §2 AUDIO ==================== */
 const Audio2={ac:null,muted:false,bgm:null,bgmStep:0,bgmNext:0,
 unlock(){if(!this.ac){try{this.ac=new (window.AudioContext||window.webkitAudioContext)();}catch(e){}}
- if(this.ac&&this.ac.state==='suspended')this.ac.resume();},
+ if(this.ac&&this.ac.state==='suspended')this.ac.resume();
+ if(this.ac&&!this._unlocked){this._unlocked=true;
+  try{const buf=this.ac.createBuffer(1,1,22050);const src=this.ac.createBufferSource();
+   src.buffer=buf;src.connect(this.ac.destination);src.start(0);}catch(e){}}},
 osc(type,f0,f1,dur,vol,when){const ac=this.ac;if(!ac||this.muted)return;
  const t=when||ac.currentTime,o=ac.createOscillator(),g=ac.createGain();
  o.type=type;o.frequency.setValueAtTime(f0,t);
@@ -132,6 +135,7 @@ const T_main={bpm:112,
 addEventListener('pointerdown',()=>Audio2.unlock());
 addEventListener('keydown',()=>Audio2.unlock());
 addEventListener('touchstart',()=>Audio2.unlock(),{passive:true});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&Audio2.ac&&Audio2.ac.state==='suspended')Audio2.ac.resume();});
 addEventListener('touchmove',e=>{if(IS_TOUCH)e.preventDefault();},{passive:false});
 addEventListener('gesturestart',e=>e.preventDefault());
 
@@ -547,6 +551,7 @@ const player={x:60,y:230,vx:0,vy:0,onG:true,face:1,state:'normal',deadT:0,invT:0
   if(Input.nadeP)Nades.throw_(this.x,this.y-22,this.face);
  },
  aimVec(){const mx=this.x+this.face*10,my=this.y-(this.crouch?10:20);
+  if(Input.touchAim)return{dx:Input.touchAim.dx,dy:Input.touchAim.dy};
   if(Input.usingMouse){return Input.aim(mx,my);}
   let dx=this.face,dy=0;
   if(Input.up){dy=-1;dx=0;}
@@ -1676,7 +1681,7 @@ const ScnIntro={t:0,
   const total=INTRO_LINES.join('').length/14+1.5; // 全部打完所需时间
   if(Input.anyP){if(this.t<total)this.t=total; // 第一次按键：跳过打字
    else startLevel(0);}                          // 第二次按键：开始
-  if(this.t>total+5)startLevel(0);},             // 看完5秒自动开始
+  },
  draw(){cam.x=0;rectS(0,0,VW,VH,'#0a0d12');
   // 心电图装饰线
   ctx.strokeStyle='rgba(158,242,122,0.25)';ctx.beginPath();
