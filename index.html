@@ -25,7 +25,9 @@ canvas{position:absolute;inset:0;margin:auto;image-rendering:pixelated;image-ren
 .touch-buttons{position:absolute;right:calc(14px + env(safe-area-inset-right));bottom:calc(16px + env(safe-area-inset-bottom));width:184px;height:148px;pointer-events:none}
 .tbtn{position:absolute;width:48px;height:48px;border:2px solid rgba(242,246,250,.54);border-radius:50%;background:rgba(16,19,26,.42);color:#f2f6fa;font:bold 17px system-ui,sans-serif;text-align:center;line-height:44px;padding:0;pointer-events:auto;touch-action:none}
 .tbtn:active,.tbtn.down{background:rgba(242,201,76,.82);color:#10131a}
-.t-fire{right:0;bottom:44px;width:64px;height:64px;line-height:60px;font-size:24px}
+.t-fire{right:0;bottom:44px;width:74px;height:74px;line-height:normal;font-size:0}
+.t-fire .aim-knob{position:absolute;left:50%;top:50%;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:50%;background:#f2f6fa;color:#10131a;font:bold 16px/26px system-ui,sans-serif;box-shadow:0 0 0 2px rgba(16,19,26,.35);transition:transform .04s linear}
+.t-fire.down .aim-knob{background:#10131a;color:#f2c94c}
 .t-jump{right:70px;bottom:70px}.t-nade{right:70px;bottom:14px}.t-super{right:126px;bottom:42px}.t-veh{right:16px;bottom:116px}.t-pause{right:138px;bottom:104px;width:38px;height:38px;line-height:34px;font-size:15px}
 @media (orientation:portrait){#stick{width:104px;height:104px}#stick-knob{left:34px;top:34px;width:36px;height:36px}.touch-buttons{transform:scale(.9);transform-origin:right bottom}}
 </style>
@@ -35,7 +37,7 @@ canvas{position:absolute;inset:0;margin:auto;image-rendering:pixelated;image-ren
 <div id="touch-ui" aria-hidden="true">
  <div id="stick"><div id="stick-knob"></div></div>
  <div class="touch-buttons">
-  <button class="tbtn t-fire" data-touch="fire">●</button>
+  <button class="tbtn t-fire" data-touch="fire"><span class="aim-knob">●</span></button>
   <button class="tbtn t-jump" data-touch="jump">跳</button>
   <button class="tbtn t-nade" data-touch="nade">雷</button>
   <button class="tbtn t-super" data-touch="super">招</button>
@@ -134,7 +136,7 @@ addEventListener('touchmove',e=>{if(IS_TOUCH)e.preventDefault();},{passive:false
 addEventListener('gesturestart',e=>e.preventDefault());
 
 /* ==================== §4 INPUT ==================== */
-const Input={keys:{},pressed:{},mx:VW/2,my:VH/2,m0:false,m2:false,m0P:false,m2P:false,
+const Input={keys:{},pressed:{},mx:VW/2,my:VH/2,m0:false,m2:false,m0P:false,m2P:false,touchAim:null,
 usingMouse:true,_seq:'',
 get l(){return this.keys.ArrowLeft||this.keys.KeyA||this.keys.TouchLeft;},
 get r(){return this.keys.ArrowRight||this.keys.KeyD||this.keys.TouchRight;},
@@ -151,7 +153,8 @@ get pauseP(){return this.pressed.KeyP||this.pressed.Escape||this.pressed.TouchPa
 get anyP(){return this.m0P||Object.keys(this.pressed).some(k=>k!=='KeyM'&&k!=='KeyP'&&k!=='Escape');},
 endFrame(){this.pressed={};this.m0P=this.m2P=false;},
 // 世界坐标瞄准向量（px,py=枪口世界坐标）
-aim(px,py){if(this.usingMouse){const wx=this.mx+cam.x,wy=this.my;
+aim(px,py){if(this.touchAim)return{dx:this.touchAim.dx,dy:this.touchAim.dy};
+ if(this.usingMouse){const wx=this.mx+cam.x,wy=this.my;
   let dx=wx-px,dy=wy-py;const l=Math.hypot(dx,dy)||1;return{dx:dx/l,dy:dy/l};}
  return null;}};
 addEventListener('keydown',e=>{
@@ -193,11 +196,33 @@ function setupTouchControls(){
  const map={jump:'TouchJump',nade:'TouchNade',super:'TouchSuper',veh:'TouchVeh',pause:'TouchPause'};
  document.querySelectorAll('[data-touch]').forEach(btn=>{
   const act=btn.dataset.touch;
+  if(act==='fire'){
+   let firePid=null;const knob=btn.querySelector('.aim-knob');
+   const updateFireAim=e=>{
+    const r=btn.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2,lim=r.width*0.42;
+    let dx=e.clientX-cx,dy=e.clientY-cy,len=Math.hypot(dx,dy);
+    if(len<8){const f=(typeof player!=='undefined'&&player.face<0)?-1:1;Input.touchAim={dx:f,dy:0};dx=f*lim*0.55;dy=0;}
+    else{const ux=dx/len,uy=dy/len;Input.touchAim={dx:ux,dy:uy};if(len>lim){dx=ux*lim;dy=uy*lim;}}
+    if(knob)knob.style.transform='translate('+Math.round(dx)+'px,'+Math.round(dy)+'px)';
+   };
+   const fireDown=e=>{e.preventDefault();Audio2.unlock();Input.usingMouse=false;firePid=e.pointerId;btn.setPointerCapture&&btn.setPointerCapture(e.pointerId);
+    btn.classList.add('down');Input.m0=true;Input.m0P=true;Input.pressed.TouchFire=true;updateFireAim(e);};
+   const fireMove=e=>{if(e.pointerId===firePid){e.preventDefault();updateFireAim(e);}};
+   const fireUp=e=>{if(e&&e.pointerId!==undefined&&e.pointerId!==firePid)return;e&&e.preventDefault();firePid=null;btn.classList.remove('down');
+    Input.m0=false;Input.touchAim=null;if(knob)knob.style.transform='translate(0,0)';};
+   btn.addEventListener('pointerdown',fireDown);
+   btn.addEventListener('pointermove',fireMove);
+   btn.addEventListener('pointerup',fireUp);
+   btn.addEventListener('pointercancel',fireUp);
+   btn.addEventListener('lostpointercapture',fireUp);
+   addEventListener('pointerup',fireUp,true);
+   addEventListener('pointercancel',fireUp,true);
+   return;
+  }
   const down=e=>{e.preventDefault();Audio2.unlock();Input.usingMouse=false;btn.setPointerCapture&&btn.setPointerCapture(e.pointerId);btn.classList.add('down');
-   if(act==='fire'){Input.m0=true;Input.m0P=true;Input.pressed.TouchFire=true;}
-   else touchKey(map[act],true);};
+   touchKey(map[act],true);};
   const up=e=>{e&&e.preventDefault();btn.classList.remove('down');
-   if(act==='fire')Input.m0=false;else touchKey(map[act],false);};
+   touchKey(map[act],false);};
   btn.addEventListener('pointerdown',down);
   btn.addEventListener('pointerup',up);
   btn.addEventListener('pointercancel',up);
@@ -448,7 +473,7 @@ function killEnemy(e){if(e.dead)return;e.dead=true;e.gone=true;
 const Nades={list:[],
  throw_(x,y,dir){if(G.nades<=0)return;G.nades--;Audio2.sfx('nade');
   let vx=dir*150,vy=-260;
-  if(Input.usingMouse){const a=Input.aim(x,y);vx=a.dx*170;vy=Math.min(-140,a.dy*170-160);}
+ if(Input.touchAim||Input.usingMouse){const a=Input.aim(x,y);vx=a.dx*170;vy=Math.min(-140,a.dy*170-160);}
   this.list.push({x,y,vx,vy,t:0});},
  update(dt){for(let i=this.list.length-1;i>=0;i--){const n=this.list[i];n.t+=dt;n.vy+=GRAV*dt;
   n.x+=n.vx*dt;n.y+=n.vy*dt;const gy=groundY(n.x);
@@ -505,7 +530,8 @@ const player={x:60,y:230,vx:0,vy:0,onG:true,face:1,state:'normal',deadT:0,invT:0
   else this.onG=false;
   if(gy===null&&this.y>VH+30){killPlayer(true);return;} // 坠落
   // 朝向与瞄准
-  if(Input.usingMouse){this.face=(Input.mx+cam.x)>=this.x?1:-1;}
+   if(Input.touchAim){this.face=Input.touchAim.dx>=0?1:-1;}
+   else if(Input.usingMouse){this.face=(Input.mx+cam.x)>=this.x?1:-1;}
   else if(mv!==0)this.face=mv>0?1:-1;
   // 跑步动画
   if(Math.abs(this.vx)>1&&this.onG){this.legT+=dt;if(this.legT>0.07){this.legT=0;this.legF=(this.legF+1)&3;}}
@@ -913,7 +939,7 @@ const Veh={cur:null,
   // 倒车射击：瞄准独立于移动
   v.fireCd-=dt;
   let a={dx:v.face,dy:0};
-  if(Input.usingMouse){a=Input.aim(v.x,v.y-18);v.face=a.dx>=0?1:-1;}
+   if(Input.touchAim||Input.usingMouse){a=Input.aim(v.x,v.y-18);v.face=a.dx>=0?1:-1;}
   if(Input.fire&&v.fireCd<=0){v.fireCd=0.05;
    Bullets.fire(v.x+a.dx*16,v.y-18+a.dy*8,a.dx,a.dy,'gatling',false);} // 载具不耗弹
   if(Input.nadeP)Nades.throw_(v.x,v.y-22,v.face);
@@ -1625,7 +1651,7 @@ const ScnTitle={t:0,
   ctx.drawImage(img,VW/2-60,128,80,76);
   if(Math.floor(this.t*1.5)%4===0)txt('嘿嘿。',VW/2+30,140,'#c8d4e0',9);
   if(IS_TOUCH){
-   txt('【手机】左滑杆移动/抬枪/蹲  右侧：射击 跳 雷 大招 载具 暂停',VW/2,212,'#c8d4e0',8,'center');
+   txt('【手机】左滑杆移动/蹲  按住并拖动射击键瞄准开火  右侧：跳 雷 大招 载具 暂停',VW/2,212,'#c8d4e0',8,'center');
    txt('建议横屏；iOS Safari 可直接打开，第一次点屏幕会解锁声音',VW/2,224,'#c8d4e0',8,'center');
   }else{
    txt('【键鼠】AD移动 W/空格跳 S蹲 鼠标瞄准 左键射击 右键手雷 Q大招 E载具',VW/2,212,'#c8d4e0',8,'center');
