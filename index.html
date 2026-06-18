@@ -621,12 +621,28 @@ function drawSuit(x,y,face){
  ctx.fillStyle='#c8d4e0';
  for(let i=0;i<6;i++){const an=t+i;
   rect(ax+Math.cos(an)*7,y-24+Math.sin(an)*7,3,3,'#c8d4e0');}
- rect(ax-3,y-27,6,6,'#8a96a8');
- // 钉枪风暴炮管
- for(let i=0;i<3;i++)rect(x+d*10,y-36+i*3,d*12,2,'#f2c94c');
- // 能量光晕
- ctx.globalAlpha=0.25+Math.sin(t*2)*0.1;
- rect(x-16,y-40,32,40,'#62d6c8');ctx.globalAlpha=1;}
+  rect(ax-3,y-27,6,6,'#8a96a8');
+  // 钉枪风暴炮管
+  for(let i=0;i<3;i++)rect(x+d*10,y-36+i*3,d*12,2,'#f2c94c');
+  // 能量光晕
+  ctx.globalAlpha=0.25+Math.sin(t*2)*0.1;
+  rect(x-16,y-40,32,40,'#62d6c8');ctx.globalAlpha=1;}
+function drawAimGuide(){
+ if(!player||player.state!=='normal'||(!Input.touchAim&&!(Input.usingMouse&&Input.fire)))return;
+ let sx,sy,a;
+ if(player.inVeh&&typeof Veh!=='undefined'&&Veh.cur){
+  sx=Veh.cur.x;sy=Veh.cur.y-18;a=Input.aim(sx,sy)||{dx:Veh.cur.face,dy:0};
+ }else{
+  sx=player.x+player.face*10;sy=player.y-(player.crouch?10:20);a=player.aimVec();
+ }
+ if(!a)return;
+ ctx.globalAlpha=0.72;
+ for(let d=16;d<=128;d+=10){
+  const pulse=(d/10+Math.floor(_last/120))&1;
+  rect(sx+a.dx*d-1,sy+a.dy*d-1,pulse?3:2,pulse?3:2,d>92?'#ffe9b0':'#f2c94c');
+ }
+ ctx.globalAlpha=1;
+}
 function killPlayer(fall){
  if(god||player.invT>0&&!fall||player.state!=='normal'||G.superT>0)return;
  if(G.shield>0&&!fall){G.shield=0;player.invT=1.5;Audio2.sfx('crack');
@@ -1629,7 +1645,7 @@ const ScnPlay={
    rect(cp-1,gy-18,2,16,Level.checkpointX>=cp?'#9ef27a':'#5a4632');}
   Ents.draw();Hazards.draw();Veh.draw();
   if(Level.bossOn)Boss.draw();
-  player.draw();Bullets.draw();Nades.draw();
+  drawAimGuide();player.draw();Bullets.draw();Nades.draw();
   Particles.draw();Floaters.draw();
   drawHUD();}};
 function startLevel(i){G.lvl=i;G.rank=Math.max(G.rank,i);Level.load(i);Scenes.replace(ScnPlay);}
