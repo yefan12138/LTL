@@ -71,6 +71,7 @@ const PAL={'.':null,'0':'#10131a','1':'#1a2233','2':'#2a3650','G':'#8a96a8','g':
 'O':'#e8853d','o':'#ffb47a','E':'#f2b09a','e':'#d68f78','N':'#3a4252','L':'#9ef27a'};
 const DEBUG=/[?&]debug=1/.test(location.search);
 const HARD={initialLives:4,initialNades:4,enemyHp:1.14,enemySpeed:1.08,perLevelHp:0.18,perLevelSpeed:0.10,bossHp:1.12,bossPerLevel:0.08,hostileSpeedPerLevel:0.06};
+const PLAYER_SCALE=1.38,ENEMY_SCALE=1.65,ENEMY_MIN_HEIGHT=Math.round(38*PLAYER_SCALE*0.5);
 let god=false;
 
 /* ==================== §2 AUDIO ==================== */
@@ -246,6 +247,11 @@ const bakeAnim=frames=>frames.map(bake);
 function drawSpr(img,x,y,flip){const px=Math.round(x-cam.x-img.width/2),py=Math.round(y-img.height);
  if(flip){ctx.save();ctx.translate(px+img.width,py);ctx.scale(-1,1);ctx.drawImage(img,0,0);ctx.restore();}
  else ctx.drawImage(img,px,py);}
+function drawSprScaled(img,x,y,flip,scale){const w=img.width*scale,h=img.height*scale,px=Math.round(x-cam.x-w/2),py=Math.round(y-h);
+ ctx.save();
+ if(flip){ctx.translate(px+w,py);ctx.scale(-scale,scale);}
+ else{ctx.translate(px,py);ctx.scale(scale,scale);}
+ ctx.drawImage(img,0,0);ctx.restore();}
 function rect(x,y,w,h,col){ctx.fillStyle=col;ctx.fillRect(Math.round(x-cam.x),Math.round(y),w,h);}
 function rectS(x,y,w,h,col){ctx.fillStyle=col;ctx.fillRect(Math.round(x),Math.round(y),w,h);} // 屏幕坐标
 function txt(s,x,y,col,size,align){ctx.fillStyle=col||'#fff';ctx.font=(size||8)+'px "Microsoft YaHei",sans-serif';
@@ -501,7 +507,7 @@ function explode(x,y,r,dmg,friendly){
 /* ==================== §7d 玩家：老铁 ==================== */
 const player={x:60,y:230,vx:0,vy:0,onG:true,face:1,state:'normal',deadT:0,invT:0,
  idleT:0,idleAct:null,fireCd:0,meleeT:0,legT:0,legF:0,inVeh:null,
- top(){return this.y-(this.crouch?16:30);},
+ top(){return this.y-(this.crouch?Math.round(16*PLAYER_SCALE):Math.round(30*PLAYER_SCALE));},
  crouch:false,
  reset(x,y){this.x=x;this.y=y;this.vx=this.vy=0;this.state='normal';this.invT=2;
   this.inVeh=null;this.crouch=false;this.idleT=0;this.idleAct=null;},
@@ -592,8 +598,8 @@ const player={x:60,y:230,vx:0,vy:0,onG:true,face:1,state:'normal',deadT:0,invT:0
  draw(){
   if(this.inVeh)return;
   if(this.invT>0&&Math.floor(this.invT*12)%2===0&&this.state==='normal')return; // 无敌闪烁
-  if(this.state==='dead'){const f=this.deadT>0.5?1:0;
-   drawSpr(bakePlayer({dead:f}),this.x,this.y,this.face<0);return;}
+   if(this.state==='dead'){const f=this.deadT>0.5?1:0;
+    drawSprScaled(bakePlayer({dead:f}),this.x,this.y,this.face<0,PLAYER_SCALE);return;}
   const w=WEAPONS[G.weapon];
   const legs=this.crouch?'crouch':(!this.onG?'jump':(Math.abs(this.vx)>1?'run':'idle'));
   const o={legs,legF:this.legF,aim:this.aimPose(),gun:w.gun,cape:G.rank>=4};
@@ -601,7 +607,7 @@ const player={x:60,y:230,vx:0,vy:0,onG:true,face:1,state:'normal',deadT:0,invT:0
   else if(this.idleAct==='wipe')o.wipe=true;
   else if(this.idleAct==='spin')o.spin=Math.floor(this.idleT*6)%2;
   if(G.superT>0){drawSuit(this.x,this.y,this.face);return;}
-  drawSpr(bakePlayer(o),this.x,this.y+(this.crouch?0:0),this.face<0);
+  drawSprScaled(bakePlayer(o),this.x,this.y+(this.crouch?0:0),this.face<0,PLAYER_SCALE);
  }};
 // 大招：手术机器人外骨骼形象
 function drawSuit(x,y,face){
@@ -820,14 +826,15 @@ const ENEMIES={
 function spawnEnemy(type,x,yOff){const d=ENEMIES[type];
  const gy=groundY(x);const y=(d.ai==='dive')?(120+(yOff||0)):(gy!==null?gy:230);
  const li=(typeof Level!=='undefined'&&Level.cur)?Level.idx:0; // 敌人随关卡强化
- return Ents.add({isEnemy:true,type,ai:d.ai,hp:Math.ceil(d.hp*HARD.enemyHp*(1+li*HARD.perLevelHp)),spd:d.spd*HARD.enemySpeed*(1+li*HARD.perLevelSpeed),score:d.score,w:d.w,h:d.h,
-  x,y,y0:y,vx:0,vy:0,face:-1,t:rnd(0,1),phase:0,flash:0,slowT:0,kb:0,dead:false,
+ const esc=Math.max(ENEMY_SCALE,ENEMY_MIN_HEIGHT/d.h);
+ return Ents.add({isEnemy:true,type,ai:d.ai,hp:Math.ceil(d.hp*HARD.enemyHp*(1+li*HARD.perLevelHp)),spd:d.spd*HARD.enemySpeed*(1+li*HARD.perLevelSpeed),score:d.score,w:Math.round(d.w*esc),h:Math.round(d.h*esc),sprScale:esc,
+  x,y,y0:y,vx:0,vy:0,face:-1,t:rnd(0,1),phase:0,flash:0,slowT:0,turnT:0,kb:0,dead:false,
   upd:enemyUpd,drw:enemyDrw});}
 function enemyUpd(dt,e){
  const ts=(G.adrT>0?0.55:1)*(e.slowT>0?0.4:1);dt*=ts;
- e.t+=dt;if(e.flash>0)e.flash-=dt;if(e.slowT>0)e.slowT-=dt;
+ e.t+=dt;if(e.flash>0)e.flash-=dt;if(e.slowT>0)e.slowT-=dt;if(e.turnT>0)e.turnT-=dt;
  if(e.kb){e.x+=e.kb*dt;e.kb*=0.8;if(Math.abs(e.kb)<5)e.kb=0;}
- const px=player.x,toP=px-e.x;e.face=toP>0?1:-1;
+ const px=player.x,toP=px-e.x;if(e.turnT<=0)e.face=toP>0?1:-1;
  switch(e.ai){
  case 'crawl':e.x+=e.face*e.spd*dt;snapGround(e);break;
  case 'pounce':
@@ -857,14 +864,21 @@ function enemyUpd(dt,e){
   if(G.superT>0)killEnemy(e);
   else if(player.state==='normal'&&player.invT<=0&&!player.inVeh)killPlayer();}
 }
+function turnEnemy(e,dir){e.face=dir;e.turnT=0.75;e.x+=dir*Math.max(4,e.w*0.35);}
 function snapGround(e){const gy=groundY(e.x);
- if(gy===null||e.y-gy>14){e.face*=-1;e.x+=e.face*2;} // 悬崖或高墙：折返
- else e.y=gy;}
+ if(gy===null||e.y-gy>14){turnEnemy(e,-e.face);return;} // 悬崖或高墙：折返
+ e.y=gy;
+ const step=Math.max(8,e.w*0.55),fx=e.x+e.face*step,fg=groundY(fx);
+ const left=cam.x+8,right=(cam.lockX!==null?cam.lockX+VW-12:Level.cur.len-8);
+ if(e.x<left){turnEnemy(e,1);return;}
+ if(e.x>right){turnEnemy(e,-1);return;}
+ if(fg===null||gy-fg>14||fg-gy>14)turnEnemy(e,-e.face);
+}
 function enemyDrw(e){const sp=ESPR[e.type];const f=(e.ai==='lob')?0:Math.floor(e.t*6)%sp.length;
  if(e.flash>0){ctx.globalAlpha=0.5;}
  if(e.slowT>0){ctx.globalAlpha=0.7;}
  // 盾兵画板默认朝左（盾在左列），其余画板默认朝右
- drawSpr(sp[f],e.x,e.y,e.type==='shield'?e.face>0:e.face<0);
+ drawSprScaled(sp[f],e.x,e.y,e.type==='shield'?e.face>0:e.face<0,e.sprScale||1);
  ctx.globalAlpha=1;
  if(e.ai==='pounce'&&e.phase===1)rect(e.x-2,e.y-e.h-6,4,2,'#f2c94c'); // 蓄力提示
 }
@@ -992,7 +1006,7 @@ const Veh={cur:null,
   for(let i=0;i<3;i++)rect(X+(fl?-20:6),Y-20+i*2,14,1,'#f2c94c');
   rect(X+(fl?-8:2),Y-21,6,5,'#5a4632');
   if(v.mounted){const img=bakePlayer({legs:'crouch',legF:0,aim:1,gun:{len:0,col:'#8a96a8'},cape:G.rank>=4});
-   drawSpr(img,X-2,Y-6,fl);}
+   drawSprScaled(img,X-2,Y-6,fl,PLAYER_SCALE);}
   else if(Math.floor(v.t*2)%2===0)txt('E 骑乘',X-cam.x-12,Y-44,'#62d6c8',8);
   // 耐久条
   rect(X-12,Y-36,24,3,'#1a2233');rect(X-11,Y-35,Math.max(0,Math.round(22*v.hp/v.maxHp)),1,'#62d6c8');},
